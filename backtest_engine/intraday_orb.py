@@ -17,6 +17,54 @@ class IntradayFill:
     reason: str
 
 
+@dataclass
+class OrbRecommendation:
+    symbol: str
+    session_date: pd.Timestamp
+    opening_range_minutes: int
+    direction: int
+    or_open: float
+    or_close: float
+    or_high: float
+    or_low: float
+    or_mid: float
+    or_range: float
+    atr20: float
+    ratio: float
+    ratio_min: float
+    ratio_max: float
+    avg_opening_range: float
+    max_range_valid: bool
+    ratio_valid: bool
+    capital: float
+    risk_amount: float
+    max_notional: float
+    shares: int
+    entry: float
+    stop: float
+    target: float
+    breakeven_trigger: float
+    profit_target_r: float
+    breakeven_r: float
+    risk_per_share: float
+
+    @property
+    def can_trade(self) -> bool:
+        return bool(self.max_range_valid and self.ratio_valid and self.shares > 0)
+
+    @property
+    def order_side(self) -> str:
+        return "BUY STOP" if self.direction > 0 else "SELL SHORT STOP"
+
+    @property
+    def exit_side(self) -> str:
+        return "SELL" if self.direction > 0 else "BUY TO COVER"
+
+    @property
+    def direction_name(self) -> str:
+        return "bullish" if self.direction > 0 else "bearish"
+
+
 def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:
     if isinstance(frame.columns, pd.MultiIndex):
         frame.columns = [c[0].lower() for c in frame.columns]
@@ -208,9 +256,17 @@ def orb_signal(config_path: Path, session_date: str | None = None, capital: floa
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     symbol = config["symbol"]
     source = config["intraday_data"]
-    params = config["strategy"]["params"]
     capital = float(capital if capital is not None else config.get("signal_capital", config["starting_capital"]))
     frame = _load_intraday_frame(source, symbol)
+    recommendation = build_orb_recommendation(config, frame, session_date, capital)
+    print_orb_recommendation(recommendation)
+
+
+def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, session_date: str | pd.Timestamp | None = None, capital: float | None = None) -> OrbRecommendation:
+    symbol = config["symbol"]
+    params = config["strategy"]["params"]
+    capital = float(capital if capital is not None else config.get("signal_capital", config["starting_capital"]))
+    frame = frame.copy()
     frame["datetime"] = pd.to_datetime(frame["datetime"])
     frame["date"] = frame["datetime"].dt.normalize()
     frame = frame.sort_values("datetime")
@@ -251,36 +307,66 @@ def orb_signal(config_path: Path, session_date: str | None = None, capital: floa
     breakeven_r = float(params.get("breakeven_r", 6.0))
     target = entry + direction * profit_target_r * risk_per_share
     breakeven_trigger = entry + direction * breakeven_r * risk_per_share
-    order_side = "BUY STOP" if direction > 0 else "SELL SHORT STOP"
-    exit_side = "SELL" if direction > 0 else "BUY TO COVER"
-    can_trade = bool(max_range_valid and ratio_valid and shares > 0)
 
-    print(f"ORB signal for {symbol} on {target_date.date()} ({opening_range_minutes}-minute opening range)")
-    print(f"Opening candle: {'bullish' if direction > 0 else 'bearish'} ({or_open:.2f} -> {or_close:.2f})")
-    print(f"Opening range high/low/mid: {or_high:.2f} / {or_low:.2f} / {or_mid:.2f}")
-    print(f"Opening range: {or_range:.4f}")
-    print(f"ATR20 before session: {atr20:.4f}")
-    print(f"OR/ATR20: {ratio:.4f} (required {ratio_min:.2f} < ratio <= {ratio_max:.2f})")
-    if previous_opening_ranges:
-        print(f"20-session avg opening range: {avg_opening_range:.4f}; 2x guard valid: {max_range_valid}")
-    print(f"Capital basis: ${capital:,.2f}; risk budget: ${risk_amount:,.2f}; max notional: ${max_notional:,.2f}")
+    return OrbRecommendation(
+        symbol=symbol,
+        session_date=target_date,
+        opening_range_minutes=opening_range_minutes,
+        direction=direction,
+        or_open=or_open,
+        or_close=or_close,
+        or_high=or_high,
+        or_low=or_low,
+        or_mid=or_mid,
+        or_range=or_range,
+        atr20=atr20,
+        ratio=ratio,
+        ratio_min=ratio_min,
+        ratio_max=ratio_max,
+        avg_opening_range=avg_opening_range,
+        max_range_valid=max_range_valid,
+        ratio_valid=ratio_valid,
+        capital=capital,
+        risk_amount=risk_amount,
+        max_notional=max_notional,
+        shares=shares,
+        entry=entry,
+        stop=stop,
+        target=target,
+        breakeven_trigger=breakeven_trigger,
+        profit_target_r=profit_target_r,
+        breakeven_r=breakeven_r,
+        risk_per_share=risk_per_share,
+    )
+
+
+def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
+    print(f"ORB signal for {recommendation.symbol} on {recommendation.session_date.date()} ({recommendation.opening_range_minutes}-minute opening range)")
+    print(f"Opening candle: {recommendation.direction_name} ({recommendation.or_open:.2f} -> {recommendation.or_close:.2f})")
+    print(f"Opening range high/low/mid: {recommendation.or_high:.2f} / {recommendation.or_low:.2f} / {recommendation.or_mid:.2f}")
+    print(f"Opening range: {recommendation.or_range:.4f}")
+    print(f"ATR20 before session: {recommendation.atr20:.4f}")
+    print(f"OR/ATR20: {recommendation.ratio:.4f} (required {recommendation.ratio_min:.2f} < ratio <= {recommendation.ratio_max:.2f})")
+    if pd.notna(recommendation.avg_opening_range):
+        print(f"20-session avg opening range: {recommendation.avg_opening_range:.4f}; 2x guard valid: {recommendation.max_range_valid}")
+    print(f"Capital basis: ${recommendation.capital:,.2f}; risk budget: ${recommendation.risk_amount:,.2f}; max notional: ${recommendation.max_notional:,.2f}")
     print("")
-    if not can_trade:
+    if not recommendation.can_trade:
         print("Recommendation: NO TRADE")
-        if not max_range_valid:
+        if not recommendation.max_range_valid:
             print("- Opening range failed the 2x historical opening-range guardrail.")
-        if not ratio_valid:
-            print(f"- Opening range / ATR20 is outside the tested {ratio_min:.2f}-{ratio_max:.2f} band.")
-        if shares <= 0:
+        if not recommendation.ratio_valid:
+            print(f"- Opening range / ATR20 is outside the tested {recommendation.ratio_min:.2f}-{recommendation.ratio_max:.2f} band.")
+        if recommendation.shares <= 0:
             print("- Position size computed to zero shares.")
         return
     print("Recommendation: PREPARE CONTINGENT OR BRACKET ORDER")
-    print(f"1. Entry: {order_side} {shares} {symbol} @ {entry:.2f}, valid until 10:30 ET.")
-    print(f"2. Initial stop: {exit_side} {shares} {symbol} @ {stop:.2f}.")
-    print(f"3. Profit target: {exit_side} {shares} {symbol} @ {target:.2f} ({profit_target_r:.1f}R).")
-    print(f"4. Breakeven trigger: if price reaches {breakeven_trigger:.2f} ({breakeven_r:.1f}R), move stop to entry {entry:.2f}.")
+    print(f"1. Entry: {recommendation.order_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.entry:.2f}, valid until 10:30 ET.")
+    print(f"2. Initial stop: {recommendation.exit_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.stop:.2f}.")
+    print(f"3. Profit target: {recommendation.exit_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.target:.2f} ({recommendation.profit_target_r:.1f}R).")
+    print(f"4. Breakeven trigger: if price reaches {recommendation.breakeven_trigger:.2f} ({recommendation.breakeven_r:.1f}R), move stop to entry {recommendation.entry:.2f}.")
     print("5. Flatten any open position at 15:30 ET.")
-    print(f"Estimated risk/share: ${risk_per_share:.2f}; estimated total risk: ${risk_per_share * shares:,.2f}; notional: ${entry * shares:,.2f}.")
+    print(f"Estimated risk/share: ${recommendation.risk_per_share:.2f}; estimated total risk: ${recommendation.risk_per_share * recommendation.shares:,.2f}; notional: ${recommendation.entry * recommendation.shares:,.2f}.")
 
 
 def _load_intraday_frame(source: dict[str, Any], symbol: str) -> pd.DataFrame:

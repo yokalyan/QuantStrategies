@@ -168,6 +168,18 @@ def main() -> None:
     signal_parser.add_argument("config", type=Path)
     signal_parser.add_argument("--date", dest="session_date")
     signal_parser.add_argument("--capital", type=float, default=None)
+    live_parser = sub.add_parser("live-orb-ibkr")
+    live_parser.add_argument("config", type=Path)
+    live_parser.add_argument("--capital", type=float, default=None)
+    live_parser.add_argument("--host", default="127.0.0.1")
+    live_parser.add_argument("--port", type=int, default=7497)
+    live_parser.add_argument("--client-id", type=int, default=45)
+    live_parser.add_argument("--account", default=None)
+    live_parser.add_argument("--no-confirm", action="store_true")
+    live_parser.add_argument("--transmit", action="store_true")
+    live_parser.add_argument("--no-wait", action="store_true")
+    live_parser.add_argument("--poll-seconds", type=int, default=10)
+    live_parser.add_argument("--signal-buffer-seconds", type=int, default=5)
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch(args.config)
@@ -179,6 +191,24 @@ def main() -> None:
         run_intraday_orb(args.config)
     elif args.cmd == "orb-signal":
         orb_signal(args.config, args.session_date, args.capital)
+    elif args.cmd == "live-orb-ibkr":
+        from backtest_engine.live_ibkr_orb import IbkrOrbSettings, run_live_ibkr_orb
+
+        run_live_ibkr_orb(
+            IbkrOrbSettings(
+                config_path=args.config,
+                capital=args.capital,
+                host=args.host,
+                port=args.port,
+                client_id=args.client_id,
+                account=args.account,
+                confirm=not args.no_confirm,
+                transmit=args.transmit,
+                wait=not args.no_wait,
+                poll_seconds=args.poll_seconds,
+                signal_buffer_seconds=args.signal_buffer_seconds,
+            )
+        )
 
 
 if __name__ == "__main__":
