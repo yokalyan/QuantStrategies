@@ -1,0 +1,162 @@
+strategy:
+  name: volatility_harvest_long_short
+  module: strategies.volatility_harvest_long_short
+  params:
+    spy_symbol: SPY
+    gld_symbol: GLD
+    vix_symbol: VIXCLS
+    long_gross: 0.9
+    short_gross: 0.6
+    ml_tilt: 0.25
+    top_weight_max: 0.35
+    top_weight_min: 0.0
+    top_long_symbols: [AAPL, MSFT, NVDA, AMZN]
+    short_universe:
+      - META
+      - GOOGL
+      - GOOG
+      - TSLA
+      - AVGO
+      - JPM
+      - UNH
+      - XOM
+      - V
+      - MA
+      - HD
+      - PG
+      - COST
+      - NFLX
+      - AMD
+      - CRM
+      - ADBE
+      - CSCO
+      - PEP
+      - KO
+      - BAC
+      - WMT
+      - DIS
+      - NKE
+      - MCD
+      - ORCL
+      - QCOM
+      - TXN
+      - IBM
+      - INTC
+      - AMAT
+      - GE
+      - CAT
+      - BA
+      - F
+      - GM
+      - T
+      - VZ
+      - PFE
+      - MRK
+      - CVX
+      - SLB
+      - COP
+      - PYPL
+      - SBUX
+      - LULU
+      - SHOP
+      - UBER
+      - ABNB
+      - SNOW
+    lookback_bars: 260
+    n_list: [10, 10, 40, 60, 90, 100]
+    sma_len: 195
+    ext_k: 2.0
+    mom_k: 1.75
+    score_threshold: 0.85
+    stop_atr: 2.0
+    top_n: 1
+    long_trail_1: 0.095
+    long_trail_2: 0.07
+    long_trail_3: 0.0485
+    min_training: 504
+start: "2015-01-01"
+end: "2026-10-06"
+starting_capital: 100000
+benchmark: SPY
+universe:
+  symbols:
+    - SPY
+    - GLD
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - META
+    - GOOGL
+    - GOOG
+    - TSLA
+    - AVGO
+    - JPM
+    - UNH
+    - XOM
+    - V
+    - MA
+    - HD
+    - PG
+    - COST
+    - NFLX
+    - AMD
+    - CRM
+    - ADBE
+    - CSCO
+    - PEP
+    - KO
+    - BAC
+    - WMT
+    - DIS
+    - NKE
+    - MCD
+    - ORCL
+    - QCOM
+    - TXN
+    - IBM
+    - INTC
+    - AMAT
+    - GE
+    - CAT
+    - BA
+    - F
+    - GM
+    - T
+    - VZ
+    - PFE
+    - MRK
+    - CVX
+    - SLB
+    - COP
+    - PYPL
+    - SBUX
+    - LULU
+    - SHOP
+    - UBER
+    - ABNB
+    - SNOW
+factors:
+  - VIXCLS
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: Volatility Harvest ML Long Short Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - QuantConnect coarse/fine fundamentals are replaced by config-supplied top long symbols and a static liquid short universe.
+    - CBOE VIX custom data is represented by FRED VIXCLS.
+    - Intraday scheduled long, short, and risk checks are approximated through one daily decision with next-open fills.
+    - Margin availability and borrow constraints are not modeled; target gross sleeves are applied directly through signed target weights.
+  gates:
+    - "**STAGE 1 GATE: CONDITIONAL PASS** The pasted code specifies the long regime rules, ML features, short Hurst/ATR filters, and stop logic, but its fundamental universe construction must be approximated independently."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran on independent yfinance/FRED data with static universes and next-open execution. Results should be read as an independent approximation, not a platform reconciliation."

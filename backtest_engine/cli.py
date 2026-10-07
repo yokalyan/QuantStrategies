@@ -56,9 +56,12 @@ def session_dates(bars: dict[str, pd.DataFrame], benchmark: str) -> list[pd.Time
 def price_map(bars: dict[str, pd.DataFrame], date: pd.Timestamp, field: str) -> dict[str, float]:
     prices = {}
     for symbol, frame in bars.items():
-        row = frame[frame["date"] == date]
-        if not row.empty:
-            prices[symbol] = float(row.iloc[0][field])
+        if "date" in frame.columns:
+            row = frame[frame["date"] == date]
+            if not row.empty:
+                prices[symbol] = float(row.iloc[0][field])
+        elif date in frame.index:
+            prices[symbol] = float(frame.at[date, field])
     return prices
 
 
@@ -74,6 +77,7 @@ def run(config_path: Path) -> Path:
     cache_dir = Path(config["data_source"]["cache_dir"])
     bars = DataPortal(cache_dir).load(all_symbols(config), config["start"], config["end"])
     dates = session_dates(bars, config["benchmark"])
+    bars = {symbol: frame.set_index("date", drop=False) for symbol, frame in bars.items()}
     portfolio = Portfolio(float(config["starting_capital"]))
     cost_model = CostModel(**config["cost_model"])
     strategy = get_strategy(config["strategy"]["name"], config["strategy"].get("params", {}))

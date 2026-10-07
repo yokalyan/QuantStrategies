@@ -99,3 +99,15 @@ def test_fred_like_factor_bars_validate():
         }
     )
     validate_bars("T10Y3M", factor, require_positive_prices=False)
+
+
+def test_portfolio_supports_short_target():
+    p = Portfolio(1000)
+    p.rebalance_to_targets(
+        pd.Timestamp("2024-01-02"),
+        {"AAA": 50},
+        {"AAA": -0.5},
+        CostModel(commission_per_share=0, slippage_bps=0, min_commission=0),
+    )
+    assert p.positions == {"AAA": -10}
+    assert abs(p.value({"AAA": 50}) - 1000) < 1e-9
