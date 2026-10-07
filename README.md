@@ -26,6 +26,8 @@ python -m backtest_engine.cli fetch configs/volatility_harvest_long_short.yaml
 python -m backtest_engine.cli run configs/volatility_harvest_long_short.yaml
 python -m backtest_engine.cli fetch configs/tqqq_rsi_mean_reversion.yaml
 python -m backtest_engine.cli run configs/tqqq_rsi_mean_reversion.yaml
+python -m backtest_engine.cli fetch configs/quad_ensemble.yaml
+python -m backtest_engine.cli run configs/quad_ensemble.yaml
 ```
 
 The first `fetch` uses yfinance and writes Parquet files under `data/cache`. After that, the backtest runs from local cache with `data_source.mode: cache`.
