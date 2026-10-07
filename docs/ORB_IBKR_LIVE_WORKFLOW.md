@@ -13,8 +13,13 @@ This is the intended human-confirmed live flow for the 15-minute TQQQ midpoint-s
 7. If there is no trade, it exits.
 8. If there is a trade, it prints the full bracket order and asks for typed confirmation.
 9. With `--transmit`, the script submits a DAY stop-entry bracket to IBKR after confirmation.
+10. After submission, the script keeps running as the day manager.
+11. If the entry has not filled by 10:30 ET, it cancels the bracket.
+12. If the entry fills, it polls TQQQ every 60 seconds by default.
+13. If price reaches 6R, it cancels the original protective stop and submits a replacement stop at breakeven.
+14. At 15:30 ET, it cancels remaining exits and submits a market order to flatten any remaining position.
 
-The command defaults to paper-trading port `7497` and dry-run mode. Dry-run mode prints the bracket but does not send orders.
+The command defaults to paper-trading port `7497`, dry-run mode, and active order management. Dry-run mode prints the bracket but does not send orders or start the manager.
 
 ## Install Live Dependency
 
@@ -48,7 +53,7 @@ Only after paper testing:
 python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000 --port 7496 --account YOUR_ACCOUNT_ID --transmit
 ```
 
-## Important Current Limitation
+## Order Manager
 
 The submitted IBKR order is a DAY bracket:
 
@@ -56,11 +61,24 @@ The submitted IBKR order is a DAY bracket:
 - Child: profit-taking limit order.
 - Child: protective stop order.
 
-The printed strategy plan still includes a 6R breakeven stop move and a 15:30 ET flatten. Those require an active order-management loop after entry. Until that is implemented and paper-tested, manage those two steps manually in TWS or run the script only as a confirmed entry/bracket assistant.
+After a fill, the manager keeps the process attached to IBKR. It uses the same strategy levels printed in the signal sheet:
+
+- No fill by 10:30 ET: cancel the parent and attached exits.
+- 6R reached: cancel the existing stop and submit a replacement stop at the entry price.
+- 15:30 ET: cancel remaining exits and submit a market flatten order for any remaining TQQQ position.
+
+The default polling interval is 60 seconds. You can change it:
+
+```bash
+python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000 --transmit --poll-seconds 30
+```
+
+The process must stay running all day for these management steps to happen.
 
 ## Safety Defaults
 
 - Paper port `7497` is the default.
 - Orders are not sent unless `--transmit` is present.
 - Confirmation is required unless `--no-confirm` is explicitly supplied.
+- Order management is enabled unless `--no-manage` is explicitly supplied.
 - TWS/IB Gateway order state should always be checked manually after submission.
