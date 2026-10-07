@@ -1,7 +1,7 @@
 start: '2010-02-11'
 end: '2025-06-02'
-total_return: 1.905276
-cagr: 0.072172
-sharpe: 0.5186
-max_drawdown: -0.348311
-number_of_fills: 2856
+total_return: 1.838771
+cagr: 0.070551
+sharpe: 0.611399
+max_drawdown: -0.186962
+number_of_fills: 2644

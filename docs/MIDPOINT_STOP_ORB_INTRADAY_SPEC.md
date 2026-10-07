@@ -6,12 +6,13 @@ This strategy was translated from pasted sample code into a dedicated independen
 
 - Symbol: TQQQ.
 - Start/end in source code: 2021-01-01 to 2026-06-01.
-- Opening range: first five one-minute bars, 09:30 through 09:34.
+- Opening range: first fifteen one-minute bars, 09:30 through 09:44.
 - Direction: long when the opening range closes bullish, short when bearish.
-- Entry window: 09:35 through before 10:30.
+- Entry window: 09:45 through before 10:30.
 - Long entry: close breaks above opening range high.
 - Short entry: close breaks below opening range low.
 - Guardrail: skip if opening range exceeds 2x the rolling 20-session average opening range.
+- ATR room filter: trade only when `0.20 < opening_range / ATR20 <= 0.35`.
 - Stop: opening range midpoint.
 - Profit target: 10R.
 - Breakeven: move stop to entry after 6R.

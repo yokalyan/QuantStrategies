@@ -270,7 +270,7 @@ def orb_signal(config_path: Path, session_date: str | None = None, capital: floa
         if not max_range_valid:
             print("- Opening range failed the 2x historical opening-range guardrail.")
         if not ratio_valid:
-            print("- Opening range / ATR20 is outside the tested 0.15-0.25 band.")
+            print(f"- Opening range / ATR20 is outside the tested {ratio_min:.2f}-{ratio_max:.2f} band.")
         if shares <= 0:
             print("- Position size computed to zero shares.")
         return

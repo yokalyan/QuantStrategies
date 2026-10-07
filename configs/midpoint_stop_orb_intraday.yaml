@@ -1,13 +1,13 @@
 strategy:
   name: midpoint_stop_orb_intraday
   params:
-    opening_range_minutes: 5
+    opening_range_minutes: 15
     risk_per_trade: 0.006
     profit_target_r: 10.0
     breakeven_r: 6.0
     max_leverage: 4.0
-    or_atr_min: 0.15
-    or_atr_max: 0.25
+    or_atr_min: 0.20
+    or_atr_max: 0.35
     entry_buffer: 0.0
 symbol: TQQQ
 start: "2021-01-01"
