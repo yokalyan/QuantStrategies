@@ -1,0 +1,27 @@
+[project]
+name = "qindependent"
+version = "0.1.0"
+description = "Independent pure-Python backtest engine and QQQ Kelly momentum strategy"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "pandas==3.0.6",
+  "numpy==2.5.3",
+  "matplotlib==3.11.2",
+  "pyarrow==25.0.1",
+  "PyYAML==6.0.3",
+  "yfinance==1.7.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backtest_engine*", "strategies*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
