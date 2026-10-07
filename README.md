@@ -32,6 +32,8 @@ python -m backtest_engine.cli fetch configs/tech_momentum_gld_sweep.yaml
 python -m backtest_engine.cli run configs/tech_momentum_gld_sweep.yaml
 python -m backtest_engine.cli fetch configs/advanced_hybrid_rotation.yaml
 python -m backtest_engine.cli run configs/advanced_hybrid_rotation.yaml
+python -m backtest_engine.cli fetch-intraday configs/midpoint_stop_orb_intraday.yaml
+python -m backtest_engine.cli run-intraday-orb configs/midpoint_stop_orb_intraday.yaml
 ```
 
 The first `fetch` uses yfinance and writes Parquet files under `data/cache`. After that, the backtest runs from local cache with `data_source.mode: cache`.

@@ -17,6 +17,7 @@ from backtest_engine.portfolio import Portfolio
 from backtest_engine.reporting import write_report
 from backtest_engine.strategy import MarketDataView, get_strategy
 from backtest_engine.validation import scan_for_forbidden_terms
+from backtest_engine.intraday_orb import fetch_intraday, run_intraday_orb
 
 
 def load_config(path: Path) -> dict:
@@ -160,7 +161,7 @@ def run(config_path: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("fetch", "run"):
+    for name in ("fetch", "run", "fetch-intraday", "run-intraday-orb"):
         p = sub.add_parser(name)
         p.add_argument("config", type=Path)
     args = parser.parse_args()
@@ -168,6 +169,10 @@ def main() -> None:
         fetch(args.config)
     elif args.cmd == "run":
         run(args.config)
+    elif args.cmd == "fetch-intraday":
+        fetch_intraday(args.config)
+    elif args.cmd == "run-intraday-orb":
+        run_intraday_orb(args.config)
 
 
 if __name__ == "__main__":
