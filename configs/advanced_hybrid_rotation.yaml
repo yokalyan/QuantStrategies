@@ -1,0 +1,122 @@
+strategy:
+  name: advanced_hybrid_rotation
+  module: strategies.advanced_hybrid_rotation
+  params:
+    vol_target: 0.15
+    leverage_cap: 1.0
+    rebalance_days: 5
+    base_allocation_core: 0.60
+    base_allocation_sat: 0.40
+    core_lookback: 60
+    core_holdings: 5
+    core_ma_period: 200
+    sat_rsi_period: 10
+    vol_lookback: 20
+    core_tickers:
+      - SPY
+      - QQQ
+      - DIA
+      - USO
+      - IXP
+      - EFA
+      - EEM
+      - XLK
+      - XLF
+      - XLV
+      - XLY
+      - XLP
+      - XLE
+      - XLI
+      - XLB
+      - XLU
+      - XLRE
+      - XLC
+      - SMH
+      - XBI
+      - IGV
+      - COPX
+      - REMX
+      - VOLT
+      - TAN
+      - LIT
+      - BOTZ
+      - ROBO
+      - GDX
+      - TLT
+      - BIL
+      - SLV
+      - SHY
+      - CWB
+      - BITO
+      - DHS
+start: "2020-01-01"
+end: "2026-10-06"
+starting_capital: 1000000
+benchmark: SPY
+universe:
+  symbols:
+    - SPY
+    - QQQ
+    - DIA
+    - USO
+    - IXP
+    - EFA
+    - EEM
+    - XLK
+    - XLF
+    - XLV
+    - XLY
+    - XLP
+    - XLE
+    - XLI
+    - XLB
+    - XLU
+    - XLRE
+    - XLC
+    - SMH
+    - XBI
+    - IGV
+    - COPX
+    - REMX
+    - VOLT
+    - TAN
+    - LIT
+    - BOTZ
+    - ROBO
+    - GDX
+    - TLT
+    - BIL
+    - SLV
+    - SHY
+    - CWB
+    - BITO
+    - DHS
+    - TQQQ
+    - UVXY
+    - TECL
+    - SPXL
+    - SQQQ
+    - TECS
+    - BSV
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: Advanced Hybrid Rotation Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - Weekly core rebalance is implemented as every five trading sessions inside the daily engine loop.
+    - The sample's SPY volatility targeting dynamically scales core and satellite budgets; this implementation applies that scaling before each daily target calculation.
+    - QC logging and holdings diagnostics are omitted because they do not affect portfolio rules.
+    - Some thematic ETFs have shorter yfinance history; they become eligible only once enough local history exists.
+  gates:
+    - "**STAGE 1 GATE: PASS** The pasted code specifies the core universe, momentum/trend filters, satellite RSI tree, volatility target, capital split, start date, and capital."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran on independent yfinance adjusted data with next-open execution. Differences from the source platform may come from data availability, timing, fees, and indicator conventions."
