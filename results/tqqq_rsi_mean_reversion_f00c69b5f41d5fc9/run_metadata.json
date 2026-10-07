@@ -1,0 +1,18 @@
+{
+  "config_hash": "f00c69b5f41d5fc9",
+  "python": "3.14.2",
+  "symbols": [
+    "TQQQ",
+    "UVXY"
+  ],
+  "cost_model": {
+    "commission_per_share": 0.005,
+    "min_commission": 1.0,
+    "slippage_bps": 1.0
+  },
+  "timing": "decision at close t, fill next open",
+  "rebalance": {
+    "frequency": "daily"
+  },
+  "data": "yfinance auto_adjust=True cached parquet"
+}

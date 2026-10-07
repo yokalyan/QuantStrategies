@@ -52,3 +52,15 @@ def wilder_rsi(close: pd.Series, period: int) -> float:
         return 100.0
     rs = avg_gain / avg_loss
     return float(100.0 - (100.0 / (1.0 + rs)))
+
+
+def simple_rsi(close: pd.Series, period: int) -> float:
+    if len(close) <= period:
+        return float("nan")
+    delta = close.diff().dropna().iloc[-period:]
+    gains = delta.clip(lower=0.0).mean()
+    losses = -delta.clip(upper=0.0).mean()
+    if losses == 0:
+        return 100.0
+    rs = gains / losses
+    return float(100.0 - (100.0 / (1.0 + rs)))

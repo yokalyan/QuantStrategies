@@ -1,0 +1,38 @@
+strategy:
+  name: tqqq_rsi_mean_reversion
+  module: strategies.tqqq_rsi_mean_reversion
+  params:
+    offensive_symbol: TQQQ
+    defensive_symbol: UVXY
+    rsi_period: 10
+    rsi_threshold: 79.0
+start: "2020-01-01"
+end: "2026-05-12"
+starting_capital: 25000
+benchmark: TQQQ
+universe:
+  symbols:
+    - TQQQ
+    - UVXY
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: TQQQ RSI Mean Reversion Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - The sample uses simple 10-day RSI, so this implementation uses simple average gains/losses rather than Wilder smoothing.
+    - The sample schedules shortly after market open; this independent engine decides with daily data through the close and fills at the next open to avoid look-ahead.
+    - The pasted code sets cash to 25000 despite a comment saying 10K; the numeric code value is used.
+    - Source summary metrics are recorded as reference only and not used for tuning.
+  gates:
+    - "**STAGE 1 GATE: PASS** The pasted code fully specifies the universe, RSI period, threshold, daily binary target, start/end dates, and starting capital."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran on independent yfinance adjusted data with next-open execution. Differences from the source summary can come from data vendor, timing, fees, slippage, and adjustment conventions."
