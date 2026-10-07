@@ -24,6 +24,13 @@ def annualized_volatility(close: pd.Series, lookback: int, periods: int = 252) -
     return float(returns.std(ddof=1) * np.sqrt(periods))
 
 
+def realized_volatility(close: pd.Series, lookback: int, periods: int = 252) -> float:
+    returns = close.pct_change().dropna().iloc[-lookback:]
+    if len(returns) < max(2, lookback // 2):
+        return float("nan")
+    return float(returns.std(ddof=0) * np.sqrt(periods))
+
+
 def simple_moving_average(close: pd.Series, period: int) -> float:
     if len(close) < period:
         return float("nan")

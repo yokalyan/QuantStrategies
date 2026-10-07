@@ -1,0 +1,72 @@
+strategy:
+  name: omniscient_paradox
+  module: strategies.omniscient_paradox
+  params:
+    candidates:
+      - SOXL
+      - TECL
+      - TQQQ
+      - FAS
+      - ERX
+      - UUP
+      - TMF
+    safe_symbol: BIL
+    spy_symbol: SPY
+    dollar_symbol: UUP
+    roc_fast: 9
+    roc_med: 21
+    roc_slow: 63
+    fast_weight: 0.5
+    med_weight: 0.3
+    slow_weight: 0.2
+    vol_lookback: 21
+    rsi_period: 14
+    sma_period: 50
+    spy_sma_period: 200
+    below_sma_discount: 0.5
+    rsi_overbought: 85
+    rsi_oversold: 30
+    rsi_penalty: 0.9
+    confidence_threshold: 0.10
+    safe_exit_score: 0.02
+    cash_trigger_score: -0.02
+    lookback_vol: 20
+    target_vol: 0.80
+    safe_remainder_threshold: 0.10
+start: "2019-01-01"
+end: "2026-10-06"
+starting_capital: 100000
+benchmark: SPY
+universe:
+  symbols:
+    - SOXL
+    - TECL
+    - TQQQ
+    - FAS
+    - ERX
+    - UUP
+    - TMF
+    - BIL
+    - SPY
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: The Omniscient Paradox Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - Minute-resolution scheduling near the close is approximated with daily close decisions and next-open fills.
+    - The sample's daily STD indicator is interpreted as realized return volatility to match the provided strategy description.
+    - BIL is used as the safe/cash-like asset and may also receive leftover capital after volatility targeting.
+    - Leveraged ETF returns are from yfinance adjusted OHLCV and may differ from the source platform's normalization.
+  gates:
+    - "**STAGE 1 GATE: PASS** The pasted code and prose specify the universe, composite ROC score, volatility scaling, SMA discount, RSI penalty, SPY regime filter, hysteresis, safe asset, and volatility-targeted sizing."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran through the independent daily engine with next-open execution. Differences from the source platform are expected because minute scheduling and data normalization are approximated."

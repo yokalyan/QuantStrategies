@@ -7,7 +7,7 @@ import pandas as pd
 from backtest_engine.analytics import compute_metrics
 from backtest_engine.data.providers import validate_bars
 from backtest_engine.execution import CostModel
-from backtest_engine.indicators import simple_moving_average, wilder_rsi
+from backtest_engine.indicators import realized_volatility, simple_moving_average, wilder_rsi
 from backtest_engine.portfolio import Portfolio
 from backtest_engine.strategy import MarketDataView, Strategy
 from backtest_engine.validation import scan_for_forbidden_terms
@@ -80,6 +80,11 @@ def test_simple_moving_average():
 def test_wilder_rsi_bounds():
     value = wilder_rsi(pd.Series([1, 2, 3, 2, 4, 5, 4, 6, 7, 8, 7, 9]), 5)
     assert 0 <= value <= 100
+
+
+def test_realized_volatility_positive_for_moving_series():
+    value = realized_volatility(pd.Series([100, 101, 99, 103, 102, 105]), 5)
+    assert value > 0
 
 
 def test_fred_like_factor_bars_validate():
