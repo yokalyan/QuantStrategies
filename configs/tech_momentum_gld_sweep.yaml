@@ -1,0 +1,92 @@
+strategy:
+  name: tech_momentum_gld_sweep
+  module: strategies.tech_momentum_gld_sweep
+  params:
+    universe:
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMZN
+      - META
+      - GOOGL
+      - GOOG
+      - AVGO
+      - TSLA
+      - AMD
+      - ADBE
+      - CRM
+      - NFLX
+      - ORCL
+      - CSCO
+      - QCOM
+      - TXN
+      - AMAT
+      - INTC
+      - IBM
+      - MU
+      - NOW
+      - SHOP
+      - SNOW
+      - UBER
+    defensive_symbol: GLD
+    momentum_lookback: 90
+    volatility_lookback: 20
+    top_n: 10
+    equity_budget: 1.0
+    stop_loss_portfolio: 0.02
+    sweep_threshold: 0.01
+start: "2015-01-01"
+end: "2026-10-06"
+starting_capital: 100000
+benchmark: QQQ
+universe:
+  symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - META
+    - GOOGL
+    - GOOG
+    - AVGO
+    - TSLA
+    - AMD
+    - ADBE
+    - CRM
+    - NFLX
+    - ORCL
+    - CSCO
+    - QCOM
+    - TXN
+    - AMAT
+    - INTC
+    - IBM
+    - MU
+    - NOW
+    - SHOP
+    - SNOW
+    - UBER
+    - GLD
+    - QQQ
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: Tech Momentum With GLD Sweep Baseline
+  assumptions:
+    - The pasted attachment repeated the prior Quad Ensemble code, so this strategy is implemented from the user's prose specification.
+    - The large, liquid US technology universe is represented by a static config list and is not point-in-time.
+    - The stop loss is modeled as position target weight times loss since latest monthly entry; if that exceeds 2% of portfolio value, the symbol is removed until the next monthly rebalance.
+    - Daily GLD sweep allocates residual target capital to GLD whenever residual capital is at least 1%.
+    - Monthly rebalancing is implemented inside a daily strategy loop so daily stops and GLD sweeps can run.
+  gates:
+    - "**STAGE 1 GATE: CONDITIONAL PASS** The prose specifies the core monthly momentum ranking, inverse-vol sizing, top-10 positive-momentum filter, 2% portfolio-loss stop, and GLD residual sweep. Exact code-level universe, dates, and sweep threshold were not provided and are documented assumptions."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran independently on yfinance adjusted data. Results should be read as a prose-spec implementation rather than a source-code reconciliation."

@@ -28,6 +28,8 @@ python -m backtest_engine.cli fetch configs/tqqq_rsi_mean_reversion.yaml
 python -m backtest_engine.cli run configs/tqqq_rsi_mean_reversion.yaml
 python -m backtest_engine.cli fetch configs/quad_ensemble.yaml
 python -m backtest_engine.cli run configs/quad_ensemble.yaml
+python -m backtest_engine.cli fetch configs/tech_momentum_gld_sweep.yaml
+python -m backtest_engine.cli run configs/tech_momentum_gld_sweep.yaml
 ```
 
 The first `fetch` uses yfinance and writes Parquet files under `data/cache`. After that, the backtest runs from local cache with `data_source.mode: cache`.
