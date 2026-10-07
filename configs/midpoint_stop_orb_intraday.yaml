@@ -13,7 +13,7 @@ starting_capital: 100000
 intraday_data:
   interval: 1m
   source_file: "/Users/avika/Downloads/TQQQ-Strategies/TQQQ-RVol-Enhanced/data/TQQQ_1min_2010_2025.txt"
-  start: "2021-01-01"
-  end: "2025-10-25"
+  start: "2010-02-11"
+  end: "2025-06-03"
   cache_dir: data/intraday
 output_dir: results
