@@ -178,8 +178,9 @@ def main() -> None:
     live_parser.add_argument("--no-confirm", action="store_true")
     live_parser.add_argument("--transmit", action="store_true")
     live_parser.add_argument("--no-wait", action="store_true")
-    live_parser.add_argument("--poll-seconds", type=int, default=10)
+    live_parser.add_argument("--poll-seconds", type=int, default=60)
     live_parser.add_argument("--signal-buffer-seconds", type=int, default=5)
+    live_parser.add_argument("--no-manage", action="store_true")
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch(args.config)
@@ -207,6 +208,7 @@ def main() -> None:
                 wait=not args.no_wait,
                 poll_seconds=args.poll_seconds,
                 signal_buffer_seconds=args.signal_buffer_seconds,
+                manage_orders=not args.no_manage,
             )
         )
 
