@@ -10,14 +10,14 @@ import pandas as pd
 REQUIRED_COLUMNS = ["date", "open", "high", "low", "close", "volume"]
 
 
-def validate_bars(symbol: str, bars: pd.DataFrame) -> None:
+def validate_bars(symbol: str, bars: pd.DataFrame, require_positive_prices: bool = True) -> None:
     missing = [c for c in REQUIRED_COLUMNS if c not in bars.columns]
     if missing:
         raise ValueError(f"{symbol} missing columns: {missing}")
     if bars["date"].duplicated().any():
         raise ValueError(f"{symbol} has duplicate dates")
     price_cols = ["open", "high", "low", "close"]
-    if (bars[price_cols] <= 0).any().any():
+    if require_positive_prices and (bars[price_cols] <= 0).any().any():
         raise ValueError(f"{symbol} has non-positive prices")
     if not bars["date"].is_monotonic_increasing:
         raise ValueError(f"{symbol} dates are not sorted")
@@ -41,7 +41,8 @@ class DataPortal:
             if end:
                 bars = bars[bars["date"] <= pd.Timestamp(end)]
             bars = bars.reset_index(drop=True)
-            validate_bars(symbol, bars)
+            require_positive_prices = not (bars["volume"] == 0).all()
+            validate_bars(symbol, bars, require_positive_prices=require_positive_prices)
             result[symbol] = bars
         return result
 
@@ -75,3 +76,27 @@ class YFinanceProvider:
             validate_bars(symbol, frame)
             frame.to_parquet(self.cache_dir / f"{symbol}.parquet", index=False)
 
+
+@dataclass
+class FredProvider:
+    cache_dir: Path
+
+    def fetch(self, symbols: list[str], start: str, end: str) -> None:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        for symbol in symbols:
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={symbol}"
+            raw = pd.read_csv(url)
+            raw.columns = [c.lower() for c in raw.columns]
+            value_col = symbol.lower()
+            frame = raw.rename(columns={"observation_date": "date", value_col: "close"})
+            frame["date"] = pd.to_datetime(frame["date"])
+            frame["close"] = pd.to_numeric(frame["close"].replace(".", pd.NA), errors="coerce")
+            frame = frame[(frame["date"] >= pd.Timestamp(start)) & (frame["date"] <= pd.Timestamp(end))]
+            frame = frame.dropna(subset=["close"]).sort_values("date").reset_index(drop=True)
+            frame["open"] = frame["close"]
+            frame["high"] = frame["close"]
+            frame["low"] = frame["close"]
+            frame["volume"] = 0
+            frame = frame[["date", "open", "high", "low", "close", "volume"]]
+            validate_bars(symbol, frame, require_positive_prices=False)
+            frame.to_parquet(self.cache_dir / f"{symbol}.parquet", index=False)

@@ -18,6 +18,8 @@ Additional strategy configs:
 ```bash
 python -m backtest_engine.cli fetch configs/conditional_sector_rotation.yaml
 python -m backtest_engine.cli run configs/conditional_sector_rotation.yaml
+python -m backtest_engine.cli fetch configs/macro_factor_rotation.yaml
+python -m backtest_engine.cli run configs/macro_factor_rotation.yaml
 ```
 
 The first `fetch` uses yfinance and writes Parquet files under `data/cache`. After that, the backtest runs from local cache with `data_source.mode: cache`.

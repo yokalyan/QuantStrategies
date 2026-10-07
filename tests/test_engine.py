@@ -80,3 +80,17 @@ def test_simple_moving_average():
 def test_wilder_rsi_bounds():
     value = wilder_rsi(pd.Series([1, 2, 3, 2, 4, 5, 4, 6, 7, 8, 7, 9]), 5)
     assert 0 <= value <= 100
+
+
+def test_fred_like_factor_bars_validate():
+    factor = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=3),
+            "open": [1.0, -0.1, 1.2],
+            "high": [1.0, -0.1, 1.2],
+            "low": [1.0, -0.1, 1.2],
+            "close": [1.0, -0.1, 1.2],
+            "volume": [0, 0, 0],
+        }
+    )
+    validate_bars("T10Y3M", factor, require_positive_prices=False)

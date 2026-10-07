@@ -1,0 +1,23 @@
+{
+  "config_hash": "c63ddc5f504be32f",
+  "python": "3.14.2",
+  "symbols": [
+    "SPY",
+    "GLD",
+    "BND",
+    "BTC-USD",
+    "VIXCLS",
+    "T10Y3M",
+    "DFF"
+  ],
+  "cost_model": {
+    "commission_per_share": 0.005,
+    "min_commission": 1.0,
+    "slippage_bps": 1.0
+  },
+  "timing": "decision at close t, fill next open",
+  "rebalance": {
+    "frequency": "monthly"
+  },
+  "data": "yfinance auto_adjust=True cached parquet"
+}

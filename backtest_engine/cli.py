@@ -11,7 +11,7 @@ import pandas as pd
 import yaml
 
 from backtest_engine.analytics import compute_metrics
-from backtest_engine.data import DataPortal, YFinanceProvider
+from backtest_engine.data import DataPortal, FredProvider, YFinanceProvider
 from backtest_engine.execution import CostModel
 from backtest_engine.portfolio import Portfolio
 from backtest_engine.reporting import write_report
@@ -29,15 +29,24 @@ def import_strategy(module_name: str) -> None:
 
 
 def all_symbols(config: dict) -> list[str]:
-    symbols = list(dict.fromkeys(config["universe"]["symbols"] + [config["benchmark"]]))
+    symbols = list(dict.fromkeys(config["universe"]["symbols"] + config.get("factors", []) + [config["benchmark"]]))
     return symbols
+
+
+def asset_symbols(config: dict) -> list[str]:
+    return list(dict.fromkeys(config["universe"]["symbols"] + [config["benchmark"]]))
 
 
 def fetch(config_path: Path) -> None:
     config = load_config(config_path)
-    provider = YFinanceProvider(Path(config["data_source"]["cache_dir"]))
-    provider.fetch(all_symbols(config), config["start"], config["end"])
-    print(f"Fetched {len(all_symbols(config))} symbols into {provider.cache_dir}")
+    cache_dir = Path(config["data_source"]["cache_dir"])
+    factors = config.get("factors", [])
+    yf_symbols = [symbol for symbol in asset_symbols(config) if symbol not in factors]
+    if yf_symbols:
+        YFinanceProvider(cache_dir).fetch(yf_symbols, config["start"], config["end"])
+    if factors:
+        FredProvider(cache_dir).fetch(factors, config["start"], config["end"])
+    print(f"Fetched {len(yf_symbols)} market symbols and {len(factors)} factors into {cache_dir}")
 
 
 def session_dates(bars: dict[str, pd.DataFrame], benchmark: str) -> list[pd.Timestamp]:
@@ -89,6 +98,9 @@ def run(config_path: Path) -> Path:
             should_rebalance = True
         elif rebalance_frequency == "weekly":
             should_rebalance = date.weekday() >= rebalance_weekday and last_rebalance_week != (iso.year, iso.week)
+        elif rebalance_frequency == "monthly":
+            previous_date = dates[i - 1] if i else None
+            should_rebalance = previous_date is None or date.month != previous_date.month
         else:
             raise ValueError(f"Unsupported rebalance frequency: {rebalance_frequency}")
         if should_rebalance and i < len(dates) - 1:

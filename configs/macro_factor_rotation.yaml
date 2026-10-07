@@ -1,0 +1,56 @@
+strategy:
+  name: macro_factor_rotation
+  module: strategies.macro_factor_rotation
+  params:
+    assets:
+      - SPY
+      - GLD
+      - BND
+      - BTC-USD
+    factors:
+      - VIXCLS
+      - T10Y3M
+      - DFF
+    bitcoin_symbol: BTC-USD
+    max_bitcoin_weight: 0.1
+    lookback_years: 4
+    prediction_horizon_days: 21
+    gross_exposure: 1.5
+    max_depth: 12
+    random_state: 1
+start: "2019-01-01"
+end: "2026-10-06"
+starting_capital: 100000
+benchmark: SPY
+universe:
+  symbols:
+    - SPY
+    - GLD
+    - BND
+    - BTC-USD
+factors:
+  - VIXCLS
+  - T10Y3M
+  - DFF
+rebalance:
+  frequency: monthly
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: Macro Factor Cross Asset Rotation Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - FRED CSVs provide VIXCLS, T10Y3M, and DFF factor history; yfinance provides adjusted ETF and BTC-USD bars.
+    - Monthly decisions use data through the first equity trading day of the month and fill at the next open, which is more conservative than same-morning platform scheduling.
+    - Gross exposure targets 150%; the engine does not model margin interest or crypto exchange financing.
+    - BTCUSD from the source is represented by yfinance BTC-USD, so crypto market, pricing, and trading-hour conventions differ from the sample.
+  gates:
+    - "**STAGE 1 GATE: PASS** The pasted description and code specify assets, macro factors, model type, labels, monthly retraining, positive-forecast filter, gross exposure, and bitcoin cap."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The strategy ran on independent yfinance/FRED data with next-open execution. Reconciliation to the original platform requires its source data conventions and reported performance."
