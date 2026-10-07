@@ -75,7 +75,10 @@ def run_intraday_orb(config_path: Path) -> Path:
     else:
         frame = pd.read_parquet(Path(source["cache_dir"]) / f"{symbol}_{source.get('interval', '1m')}.parquet")
     frame["datetime"] = pd.to_datetime(frame["datetime"])
-    frame["date"] = frame["datetime"].dt.date
+    frame["date"] = frame["datetime"].dt.normalize()
+    regular_frame = frame[(frame["datetime"].dt.time >= pd.Timestamp("09:30").time()) & (frame["datetime"].dt.time <= pd.Timestamp("15:59").time())]
+    daily = regular_frame.groupby("date").agg(open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"))
+    atr20_by_date = _daily_atr20(daily)
     cash = float(config["starting_capital"])
     qty = 0
     entry_price: float | None = None
@@ -90,24 +93,35 @@ def run_intraday_orb(config_path: Path) -> Path:
     max_leverage = float(params.get("max_leverage", 4.0))
     profit_target_r = float(params.get("profit_target_r", 10.0))
     breakeven_r = float(params.get("breakeven_r", 6.0))
-    for session, day in frame.groupby("date", sort=True):
+    opening_range_minutes = int(params.get("opening_range_minutes", 5))
+    ratio_min = params.get("or_atr_min")
+    ratio_max = params.get("or_atr_max")
+    ratio_min = float(ratio_min) if ratio_min is not None else None
+    ratio_max = float(ratio_max) if ratio_max is not None else None
+    for session, day in regular_frame.groupby("date", sort=True):
         day = day.set_index("datetime").between_time("09:30", "15:59").reset_index()
-        if len(day) < 10:
+        if len(day) < opening_range_minutes + 5:
             continue
-        first = day.iloc[:5]
+        first = day.iloc[:opening_range_minutes]
         or_high = float(first["high"].max())
         or_low = float(first["low"].min())
         or_mid = (or_high + or_low) / 2.0
         or_dir = 1 if float(first.iloc[-1]["close"]) >= float(first.iloc[0]["open"]) else -1
         current_range = or_high - or_low
-        opening_ranges.append(current_range)
         if len(opening_ranges) >= 20:
             avg_range = sum(opening_ranges[-20:]) / min(20, len(opening_ranges))
             range_valid = current_range <= 2.0 * avg_range
         else:
             range_valid = True
+        atr20 = atr20_by_date.get(session)
+        if ratio_min is not None and ratio_max is not None:
+            ratio = current_range / atr20 if pd.notna(atr20) and atr20 > 0 else float("nan")
+            atr_range_valid = ratio_min < ratio <= ratio_max
+        else:
+            atr_range_valid = True
+        opening_ranges.append(current_range)
         traded_today = False
-        for _, bar in day.iloc[5:].iterrows():
+        for _, bar in day.iloc[opening_range_minutes:].iterrows():
             ts = bar["datetime"]
             price = float(bar["close"])
             equity = cash + qty * price
@@ -132,7 +146,8 @@ def run_intraday_orb(config_path: Path) -> Path:
                     entry_price = stop_price = target_price = initial_risk = None
                     be_triggered = False
                     continue
-            if qty == 0 and (not traded_today) and range_valid and pd.Timestamp("09:35").time() <= ts.time() < pd.Timestamp("10:30").time():
+            earliest_entry_time = (pd.Timestamp("09:30") + pd.Timedelta(minutes=opening_range_minutes)).time()
+            if qty == 0 and (not traded_today) and range_valid and atr_range_valid and earliest_entry_time <= ts.time() < pd.Timestamp("10:30").time():
                 direction = 0
                 if or_dir > 0 and price > or_high:
                     direction = 1
@@ -178,6 +193,8 @@ def run_intraday_orb(config_path: Path) -> Path:
         "",
         "## Caveats",
         "- This run uses the configured local one-minute bar file when `source_file` is present; otherwise it falls back to the limited yfinance intraday cache.",
+        f"- Opening range uses the first {opening_range_minutes} regular-session minutes.",
+        f"- Opening range / ATR20 filter: {ratio_min} < ratio <= {ratio_max}." if ratio_min is not None and ratio_max is not None else "- Opening range / ATR20 filter is disabled.",
         "- The local file covered the reported start/end dates in the metrics, which may be shorter than the source code's requested end date.",
         "- The backtest implements the pasted close-based stop/target checks.",
         "- No fees are applied, matching the pasted zero-fee model.",
@@ -200,13 +217,14 @@ def orb_signal(config_path: Path, session_date: str | None = None, capital: floa
     target_date = pd.Timestamp(session_date).normalize() if session_date else frame["date"].max()
     regular = frame[(frame["datetime"].dt.time >= pd.Timestamp("09:30").time()) & (frame["datetime"].dt.time <= pd.Timestamp("15:59").time())]
     day = regular[regular["date"] == target_date]
-    if len(day) < 5:
-        raise RuntimeError(f"Need at least five regular-session minute bars for {target_date.date()}; found {len(day)}")
+    opening_range_minutes = int(params.get("opening_range_minutes", 5))
+    if len(day) < opening_range_minutes:
+        raise RuntimeError(f"Need at least {opening_range_minutes} regular-session minute bars for {target_date.date()}; found {len(day)}")
 
     daily = regular.groupby("date").agg(open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"))
     atr20 = _atr20_before_session(daily, target_date)
-    previous_opening_ranges = _previous_opening_ranges(regular, target_date, 20)
-    first = day.iloc[:5]
+    previous_opening_ranges = _previous_opening_ranges(regular, target_date, 20, opening_range_minutes)
+    first = day.iloc[:opening_range_minutes]
     or_high = float(first["high"].max())
     or_low = float(first["low"].min())
     or_mid = (or_high + or_low) / 2.0
@@ -237,7 +255,7 @@ def orb_signal(config_path: Path, session_date: str | None = None, capital: floa
     exit_side = "SELL" if direction > 0 else "BUY TO COVER"
     can_trade = bool(max_range_valid and ratio_valid and shares > 0)
 
-    print(f"ORB signal for {symbol} on {target_date.date()}")
+    print(f"ORB signal for {symbol} on {target_date.date()} ({opening_range_minutes}-minute opening range)")
     print(f"Opening candle: {'bullish' if direction > 0 else 'bearish'} ({or_open:.2f} -> {or_close:.2f})")
     print(f"Opening range high/low/mid: {or_high:.2f} / {or_low:.2f} / {or_mid:.2f}")
     print(f"Opening range: {or_range:.4f}")
@@ -282,26 +300,34 @@ def _load_intraday_frame(source: dict[str, Any], symbol: str) -> pd.DataFrame:
 
 def _atr20_before_session(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:
     previous = daily[daily.index < session_date].copy()
-    if len(previous) < 21:
+    if len(previous) < 20:
         return float("nan")
-    prev_close = previous["close"].shift(1)
+    return float(_true_range(previous).iloc[-20:].mean())
+
+
+def _daily_atr20(daily: pd.DataFrame) -> pd.Series:
+    return _true_range(daily).rolling(20).mean().shift(1)
+
+
+def _true_range(daily: pd.DataFrame) -> pd.Series:
+    prev_close = daily["close"].shift(1)
     tr = pd.concat(
         [
-            previous["high"] - previous["low"],
-            (previous["high"] - prev_close).abs(),
-            (previous["low"] - prev_close).abs(),
+            daily["high"] - daily["low"],
+            (daily["high"] - prev_close).abs(),
+            (daily["low"] - prev_close).abs(),
         ],
         axis=1,
     ).max(axis=1)
-    return float(tr.iloc[-20:].mean())
+    return tr
 
 
-def _previous_opening_ranges(frame: pd.DataFrame, session_date: pd.Timestamp, count: int) -> list[float]:
+def _previous_opening_ranges(frame: pd.DataFrame, session_date: pd.Timestamp, count: int, opening_range_minutes: int = 5) -> list[float]:
     ranges: list[float] = []
     previous = frame[frame["date"] < session_date]
     for _, day in previous.groupby("date", sort=True):
-        first = day.iloc[:5]
-        if len(first) >= 5:
+        first = day.iloc[:opening_range_minutes]
+        if len(first) >= opening_range_minutes:
             ranges.append(float(first["high"].max() - first["low"].min()))
     return ranges[-count:]
 
