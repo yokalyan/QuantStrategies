@@ -1,0 +1,44 @@
+strategy:
+  name: conditional_sector_rotation
+  module: strategies.conditional_sector_rotation
+  params:
+    rsi_period: 10
+    spy_sma_period: 200
+    qqq_sma_period: 20
+    tqqq_sma_period: 20
+start: "2012-01-01"
+end: "2026-10-06"
+starting_capital: 100000
+benchmark: SPY
+universe:
+  symbols:
+    - SPY
+    - QQQ
+    - TQQQ
+    - UVXY
+    - TECL
+    - SPXL
+    - SQQQ
+    - TECS
+    - BSV
+rebalance:
+  frequency: daily
+whole_shares: true
+cost_model:
+  commission_per_share: 0.005
+  min_commission: 1.0
+  slippage_bps: 1.0
+data_source:
+  mode: cache
+  cache_dir: data/cache
+output_dir: results
+report:
+  title: Conditional Sector Rotation Baseline
+  assumptions:
+    - The pasted sample was translated as a specification; no external engine code is imported.
+    - Daily decisions use adjusted close values through the decision date and fill at the next open.
+    - The strategy holds 100% in one selected ETF; no leverage or margin borrowing beyond each ETF's embedded leverage is modeled.
+    - yfinance adjusted OHLCV data may differ from the source platform data and leveraged ETF corporate-action handling.
+  gates:
+    - "**STAGE 1 GATE: PASS** The pasted code fully specifies the ticker universe, indicators, thresholds, and target-selection tree. Fill behavior is translated to next-open execution to preserve independent no-look-ahead timing."
+    - "**STAGE 2-6 GATE: CONDITIONAL PASS** The independent engine ran this strategy without external engine dependencies. Results are data-vendor dependent and should not be reconciled to the source platform without its exact backtest output."

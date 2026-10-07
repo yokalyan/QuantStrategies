@@ -71,7 +71,9 @@ def run(config_path: Path) -> Path:
     pending_targets: dict[str, float] | None = None
     equity_rows = []
     positions_rows = []
-    rebalance_weekday = int(config["rebalance"]["weekday"])
+    rebalance_config = config.get("rebalance", {"frequency": "weekly", "weekday": 0})
+    rebalance_frequency = rebalance_config.get("frequency", "weekly")
+    rebalance_weekday = int(rebalance_config.get("weekday", 0))
     last_rebalance_week = None
     for i, date in enumerate(dates):
         open_prices = price_map(bars, date, "open")
@@ -83,11 +85,17 @@ def run(config_path: Path) -> Path:
         for symbol, shares in portfolio.positions.items():
             positions_rows.append({"date": date, "symbol": symbol, "shares": shares, "close": close_prices.get(symbol)})
         iso = date.isocalendar()
-        should_rebalance = date.weekday() >= rebalance_weekday and last_rebalance_week != (iso.year, iso.week)
+        if rebalance_frequency == "daily":
+            should_rebalance = True
+        elif rebalance_frequency == "weekly":
+            should_rebalance = date.weekday() >= rebalance_weekday and last_rebalance_week != (iso.year, iso.week)
+        else:
+            raise ValueError(f"Unsupported rebalance frequency: {rebalance_frequency}")
         if should_rebalance and i < len(dates) - 1:
             view = MarketDataView(bars, date)
             pending_targets = strategy.target_weights(view, portfolio.weights(close_prices))
-            last_rebalance_week = (iso.year, iso.week)
+            if rebalance_frequency == "weekly":
+                last_rebalance_week = (iso.year, iso.week)
     equity = pd.DataFrame(equity_rows)
     trades = pd.DataFrame([fill.__dict__ for fill in portfolio.fills])
     positions = pd.DataFrame(positions_rows)
@@ -108,20 +116,24 @@ def run(config_path: Path) -> Path:
         "symbols": all_symbols(config),
         "cost_model": config["cost_model"],
         "timing": "decision at close t, fill next open",
+        "rebalance": rebalance_config,
         "data": "yfinance auto_adjust=True cached parquet",
     }
     (out_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    gates = [
-        "**STAGE 0 GATE: CONDITIONAL PASS** Real yfinance data was reachable and cached. The condition is that yfinance is not an institutional point-in-time source and is used with adjusted bars.",
-        "**STAGE 1 GATE: CONDITIONAL PASS** The original QuantConnect page did not expose strategy rules, so this run is an assumption-based implementation. Results must not be described as a reproduction of source performance.",
-        "**STAGE 2-6 GATE: CONDITIONAL PASS** The engine, tests, and baseline run completed independently. Remaining unresolved issue is source-rule fidelity.",
-    ]
-    assumptions = [
-        "QuantConnect page returned only a terminal shell; original rules and source metrics were unavailable.",
-        "Universe is static and survivorship-biased.",
-        "Signals use adjusted daily yfinance prices and next-open fills.",
-    ]
-    write_report(out_dir / "report.md", "QQQ Kelly Momentum Leaders Baseline", metrics, assumptions, gates)
+    report_config = config.get("report", {})
+    gates = report_config.get(
+        "gates",
+        [
+            "**STAGE GATE: CONDITIONAL PASS** Real yfinance data was used with adjusted bars, and the engine ran independently. Source-rule fidelity depends on the provided strategy specification.",
+        ],
+    )
+    assumptions = report_config.get(
+        "assumptions",
+        [
+            "Signals use adjusted daily yfinance prices and next-open fills.",
+        ],
+    )
+    write_report(out_dir / "report.md", report_config.get("title", config["strategy"]["name"]), metrics, assumptions, gates)
     violations = scan_for_forbidden_terms(Path("."))
     if violations:
         (out_dir / "independence_violations.txt").write_text("\n".join(violations), encoding="utf-8")
@@ -144,4 +156,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

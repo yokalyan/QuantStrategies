@@ -7,6 +7,7 @@ import pandas as pd
 from backtest_engine.analytics import compute_metrics
 from backtest_engine.data.providers import validate_bars
 from backtest_engine.execution import CostModel
+from backtest_engine.indicators import simple_moving_average, wilder_rsi
 from backtest_engine.portfolio import Portfolio
 from backtest_engine.strategy import MarketDataView, Strategy
 from backtest_engine.validation import scan_for_forbidden_terms
@@ -70,3 +71,12 @@ def test_target_rebalance_whole_shares():
         CostModel(commission_per_share=0, slippage_bps=0, min_commission=0),
     )
     assert p.positions == {"AAA": 10, "BBB": 5}
+
+
+def test_simple_moving_average():
+    assert simple_moving_average(pd.Series([1, 2, 3, 4]), 3) == 3.0
+
+
+def test_wilder_rsi_bounds():
+    value = wilder_rsi(pd.Series([1, 2, 3, 2, 4, 5, 4, 6, 7, 8, 7, 9]), 5)
+    assert 0 <= value <= 100
