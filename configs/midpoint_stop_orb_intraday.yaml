@@ -6,10 +6,14 @@ strategy:
     profit_target_r: 10.0
     breakeven_r: 6.0
     max_leverage: 4.0
+    or_atr_min: 0.15
+    or_atr_max: 0.25
+    entry_buffer: 0.0
 symbol: TQQQ
 start: "2021-01-01"
 end: "2026-06-01"
 starting_capital: 100000
+signal_capital: 5000
 intraday_data:
   interval: 1m
   source_file: "/Users/avika/Downloads/TQQQ-Strategies/TQQQ-RVol-Enhanced/data/TQQQ_1min_2010_2025.txt"
