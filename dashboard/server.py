@@ -120,6 +120,17 @@ def get_stats() -> dict[str, Any]:
     return compute_dashboard_analytics()
 
 
+@app.get("/api/ibkr/ping")
+def ping_ibkr(host: str = "127.0.0.1", port: int = 7497) -> dict[str, Any]:
+    import socket
+    try:
+        sock = socket.create_connection((host, port), timeout=0.6)
+        sock.close()
+        return {"reachable": True, "host": host, "port": port}
+    except Exception as exc:
+        return {"reachable": False, "host": host, "port": port, "error": str(exc)}
+
+
 @app.get("/api/status")
 def get_status() -> dict[str, Any]:
     return runner.get_status()

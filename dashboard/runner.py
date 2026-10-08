@@ -42,6 +42,7 @@ class StrategyRunner:
         self.state: dict[str, Any] = self._default_state()
         self.logs: list[dict[str, str]] = []
         self.callbacks: list[Callable[[dict[str, Any]], None]] = []
+        self.overrides: dict[str, Any] = {}
 
     def _default_state(self) -> dict[str, Any]:
         return {
@@ -108,55 +109,76 @@ class StrategyRunner:
         }
 
     def start(self, overrides: dict[str, Any] | None = None) -> bool:
-        if self.is_running and self.thread and self.thread.is_alive():
-            return False
+        if self.thread and self.thread.is_alive():
+            if not self.stop_requested:
+                return False
+            # Wait for dying thread to terminate cleanly
+            self.thread.join(timeout=3.0)
+            if self.thread.is_alive():
+                self.log("WARN", "Previous worker thread is still finalizing, please retry in 1 second...")
+                return False
 
         self.stop_requested = False
         self.is_running = True
+        self.overrides = overrides or {}
         self.state["status"] = "STARTING"
         self.state["error"] = None
-        self.state["mode"] = "TRANSMIT" if bool((overrides or {}).get("transmit", False)) else "DRY_RUN"
+        self.state["mode"] = "TRANSMIT" if bool(self.overrides.get("transmit", False)) else "DRY_RUN"
         self.state["next_action"] = "Connecting to IBKR."
         self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
         self._notify({"type": "state", "data": self.state})
 
         self.thread = threading.Thread(
             target=self._run_loop,
-            args=(overrides or {},),
+            args=(self.overrides,),
             daemon=True,
         )
         self.thread.start()
         return True
 
     def stop(self) -> bool:
-        if not (self.is_running and self.thread and self.thread.is_alive()):
-            self.stop_requested = False
-            self.state["status"] = "STOPPED"
-            self.state["next_action"] = "Strategy is already stopped."
-            self._notify({"type": "state", "data": self.state})
-            return False
         self.stop_requested = True
+        ib = self.ib
+        if ib:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
         self.state["status"] = "STOPPING"
-        self.state["next_action"] = "Graceful stop requested. The worker will exit at the next safe checkpoint."
+        self.state["next_action"] = "Graceful stop requested. Cleaning up orders and socket..."
         self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
         self.log("WARN", "Graceful stop requested by user.")
+        self._notify({"type": "state", "data": self.state})
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        self.is_running = False
+        self.state["status"] = "STOPPED"
+        self.state["next_action"] = "Strategy execution stopped."
         self._notify({"type": "state", "data": self.state})
         return True
 
     def kill(self) -> bool:
         self.stop_requested = True
-        if self.ib:
+        ib = self.ib
+        if ib:
             try:
-                if self.ib.isConnected():
-                    self.ib.disconnect()
+                ib.disconnect()
             except Exception:
                 pass
+            try:
+                if hasattr(ib, "client") and ib.client:
+                    ib.client.disconnect()
+            except Exception:
+                pass
+        self.ib = None
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
         self.is_running = False
         self.state["status"] = "KILLED"
         self.state["ibkr_connected"] = False
-        self.state["next_action"] = "Connection forcibly closed. Verify IBKR manually before restarting."
+        self.state["next_action"] = "Connection forcibly closed."
         self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
-        self.log("ERROR", "Emergency kill executed. IBKR connection closed.")
+        self.log("ERROR", "Emergency kill executed. Thread terminated and connection closed.")
         self._notify({"type": "state", "data": self.state})
         return True
 
@@ -175,22 +197,83 @@ class StrategyRunner:
         return self.start(overrides or {})
 
     def flatten_now(self) -> bool:
-        if not self.ib or not self.contract:
-            self.log("WARN", "Flatten requested, but no active IBKR contract is attached.")
-            return False
-        try:
-            from ib_insync import MarketOrder
+        from ib_insync import IB, MarketOrder, Stock
 
-            _flatten_position(self.ib, self.contract, self._recommendation_obj(), self.account, MarketOrder)
-            self.state["status"] = "FLATTEN_REQUESTED"
-            self.state["next_action"] = "Flatten order submitted. Verify final position in IBKR."
-            self.log("WARN", "Manual flatten requested from dashboard.")
+        # 1. Active session flatten
+        if self.ib and self.ib.isConnected() and self.contract:
+            try:
+                for t in self.trades:
+                    _cancel_trade_if_active(self.ib, t)
+                rec = None
+                try:
+                    rec = self._recommendation_obj()
+                except Exception:
+                    pass
+                _flatten_position(self.ib, self.contract, rec, self.account, MarketOrder)
+                self.state["status"] = "FLATTEN_REQUESTED"
+                self.state["next_action"] = "Flatten order submitted. Verify final position in IBKR."
+                self.log("WARN", "Manual flatten submitted via active session.")
+                self._notify({"type": "state", "data": self.state})
+                return True
+            except Exception as exc:
+                self.state["error"] = str(exc)
+                self.log("ERROR", f"Manual flatten failed: {exc}")
+                self._notify({"type": "state", "data": self.state})
+                return False
+
+        overrides = getattr(self, "overrides", {}) or {}
+        host = overrides.get("host", "127.0.0.1")
+        port = int(overrides.get("port", 7497))
+        account = overrides.get("account")
+        symbol = self.state.get("symbol", "TQQQ")
+
+        self.log("WARN", f"Executing direct emergency flatten on {host}:{port} for {symbol}...")
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        ib = IB()
+        try:
+            ib.connect(host, port, clientId=96, timeout=4)
+            contract = Stock(symbol, "SMART", "USD")
+            ib.qualifyContracts(contract)
+
+            # Cancel open orders for symbol
+            for trade in ib.openTrades():
+                if trade.contract.symbol == symbol and not trade.isDone():
+                    ib.cancelOrder(trade.order)
+
+            ib.reqPositions()
+            ib.sleep(0.5)
+            pos_size = 0
+            for pos in ib.positions():
+                if pos.contract.symbol == symbol:
+                    pos_size += int(pos.position)
+            if pos_size != 0:
+                action = "SELL" if pos_size > 0 else "BUY"
+                mkt_order = MarketOrder(action, abs(pos_size))
+                mkt_order.tif = "DAY"
+                if account:
+                    mkt_order.account = account
+                ib.placeOrder(contract, mkt_order)
+                ib.sleep(0.5)
+                self.log("WARN", f"Submitted market {action} {abs(pos_size)} {symbol} to flatten position.")
+            else:
+                self.log("INFO", f"No open position found for {symbol} to flatten.")
+
+            ib.disconnect()
+            self.state["status"] = "FLATTENED"
+            self.state["next_action"] = "Emergency flatten executed. Verify position in IBKR."
+            self.log("SUCCESS", f"Emergency flatten completed on IBKR for {symbol}.")
             self._notify({"type": "state", "data": self.state})
             return True
         except Exception as exc:
-            self.state["error"] = str(exc)
-            self.log("ERROR", f"Manual flatten failed: {exc}")
-            self._notify({"type": "state", "data": self.state})
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+            self.log("ERROR", f"Emergency flatten failed: {exc}")
             return False
 
     def _recommendation_obj(self) -> OrbRecommendation:
@@ -272,46 +355,64 @@ class StrategyRunner:
             self.log("INFO", f"Connecting to IBKR at {host}:{port} clientId={client_id}...")
             self._notify({"type": "state", "data": self.state})
 
-            self.ib = IB()
-            ib = self.ib
             connected = False
             last_conn_err = None
             base_client_id = client_id
             curr_client_id = base_client_id
-            max_connect_attempts = int(overrides.get("connect_attempts", 12))
+            max_connect_attempts = int(overrides.get("connect_attempts", 3))
 
             for attempt in range(1, max_connect_attempts + 1):
                 if self.stop_requested:
                     return
+
+                # Fresh IB instance per attempt prevents reusing closed or broken sockets
+                ib = IB()
+                self.ib = ib
+
                 try:
-                    ib.connect(host, port, clientId=curr_client_id, timeout=5)
+                    self.log("INFO", f"Connecting to IBKR at {host}:{port} clientId={curr_client_id} (attempt {attempt}/{max_connect_attempts})...")
+                    ib.connect(host, port, clientId=curr_client_id, timeout=4)
                     connected = True
                     client_id = curr_client_id
                     break
                 except Exception as e:
                     last_conn_err = e
+                    # Unconditionally disconnect broken instance so the TCP socket is never left hanging
+                    try:
+                        ib.disconnect()
+                    except Exception:
+                        pass
+                    self.ib = None
+
                     err_str = str(e).lower()
                     if "client id is already in use" in err_str or "326" in err_str or "peer closed" in err_str:
-                        self.log("WARN", f"Client ID {curr_client_id} in use, trying clientId={curr_client_id + 1}...")
+                        self.log("WARN", f"Client ID {curr_client_id} in use, auto-switching to clientId={curr_client_id + 1}...")
                         curr_client_id += 1
-                        time.sleep(0.5)
+                        for _ in range(5):
+                            if self.stop_requested:
+                                return
+                            time.sleep(0.1)
                         continue
                     if isinstance(e, (ConnectionRefusedError, TimeoutError, OSError)):
                         self.state["next_action"] = (
-                            f"IBKR socket is not accepting connections yet. "
-                            f"Retrying {attempt}/{max_connect_attempts} on {host}:{port}."
+                            f"IBKR socket not accepting connections on {host}:{port}. "
+                            f"Retrying ({attempt}/{max_connect_attempts})... Click Cancel to abort."
                         )
-                        self.log("WARN", f"IBKR not ready on {host}:{port}; retrying connection attempt {attempt}/{max_connect_attempts}...")
+                        self.log("WARN", f"IBKR socket not ready on {host}:{port} (attempt {attempt}/{max_connect_attempts})...")
                         self._notify({"type": "state", "data": self.state})
-                        time.sleep(2)
+                        curr_client_id += 1
+                        for _ in range(12):
+                            if self.stop_requested:
+                                return
+                            time.sleep(0.1)
                         continue
                     break
 
             if not connected:
                 if isinstance(last_conn_err, (ConnectionRefusedError, OSError)):
                     raise ConnectionError(
-                        f"Connection refused to IBKR at {host}:{port}. "
-                        f"Please verify TWS or IB Gateway is running, logged in, and API access is enabled on port {port}."
+                        f"IBKR port {port} is closed. TWS or IB Gateway is not running or API access is disabled on {host}:{port}. "
+                        f"In TWS, open File -> Global Configuration -> API -> Settings -> check 'Enable ActiveX and Socket Clients'."
                     ) from last_conn_err
                 elif isinstance(last_conn_err, TimeoutError):
                     raise TimeoutError(
@@ -487,11 +588,18 @@ class StrategyRunner:
             self.state["next_action"] = "Resolve the error, verify IBKR state, then restart if safe."
             self.log("ERROR", f"Strategy error: {exc}")
         finally:
-            if ib and ib.isConnected():
+            if ib:
                 try:
                     ib.disconnect()
                 except Exception:
                     pass
+                try:
+                    if hasattr(ib, "client") and ib.client:
+                        ib.client.disconnect()
+                except Exception:
+                    pass
+            if self.ib is ib:
+                self.ib = None
             self.state["ibkr_connected"] = False
             self.is_running = False
             if self.state["status"] not in {"ERROR", "STAND_DOWN", "FLATTENED", "READY_DRY_RUN", "KILLED", "EXIT_PROFIT", "EXIT_STOP", "CANCELLED"}:

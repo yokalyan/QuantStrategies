@@ -10,6 +10,7 @@ After the first fifteen regular-session one-minute bars are available, run:
 python -m backtest_engine.cli orb-signal configs/midpoint_stop_orb_intraday.yaml --capital 5000
 ```
 
+For a beginner-friendly overview with detailed visual examples of how the strategy trades up and down, see [ORB Strategy Usage Guide](ORB_STRATEGY_USAGE_GUIDE.md).
 For the IBKR-assisted workflow that waits, polls IBKR, asks for confirmation, submits the bracket, monitors fills, moves the stop at 6R, and flattens at 15:30 ET, see [ORB IBKR Live Workflow](ORB_IBKR_LIVE_WORKFLOW.md).
 
 For testing a historical session:

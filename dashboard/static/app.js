@@ -8,6 +8,8 @@ let currentPnlView = "monthly"; // "monthly" or "weekly"
 let cachedAnalyticsData = null;
 let websocket = null;
 let isStrategyRunning = false;
+let currentStrategyState = null;
+let lastIbkrReachable = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
@@ -16,6 +18,17 @@ document.addEventListener("DOMContentLoaded", () => {
   loadConfig();
   loadStats();
   connectWebSocket();
+
+  // On-demand IBKR check
+  setTimeout(checkIbkrSocketPing, 800);
+  const ibkrPill = document.getElementById("ibkr-pill-container");
+  if (ibkrPill) {
+    ibkrPill.style.cursor = "pointer";
+    ibkrPill.addEventListener("click", () => {
+      appendLogLine({ time: new Date().toLocaleTimeString(), level: "INFO", message: "Probing IBKR socket reachability..." });
+      checkIbkrSocketPing();
+    });
+  }
 
   document.getElementById("btn-toggle-strategy").addEventListener("click", handleToggleStrategy);
   document.getElementById("btn-restart-strategy").addEventListener("click", handleRestartStrategy);
@@ -31,7 +44,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const portSelect = document.getElementById("cfg-port");
   if (portSelect) {
-    portSelect.addEventListener("change", handlePortChange);
+    portSelect.addEventListener("change", () => {
+      handlePortChange();
+      checkIbkrSocketPing();
+    });
   }
   document.getElementById("btn-toggle-monthly").addEventListener("click", () => switchPnlView("monthly"));
   document.getElementById("btn-toggle-weekly").addEventListener("click", () => switchPnlView("weekly"));
@@ -446,23 +462,76 @@ function updateServerStatus(online) {
   }
 }
 
-function updateIbkrStatus(status, isConnected) {
+async function checkIbkrSocketPing() {
+  if (isStrategyRunning) return;
+  const port = document.getElementById("cfg-port") ? parseInt(document.getElementById("cfg-port").value, 10) : 7497;
+  const host = "127.0.0.1";
+  try {
+    const res = await fetch(`/api/ibkr/ping?host=${host}&port=${port}`);
+    const data = await res.json();
+    lastIbkrReachable = data.reachable;
+    updateIbkrStatus(currentStrategyState ? currentStrategyState.status : "STOPPED", false, port);
+  } catch (e) {
+    lastIbkrReachable = false;
+    updateIbkrStatus("STOPPED", false, port);
+  }
+}
+
+function updateIbkrStatus(status, isConnected, forcedPort) {
   const dot = document.getElementById("ibkr-status-dot");
   const text = document.getElementById("ibkr-status-text");
   if (!dot || !text) return;
+  const port = forcedPort || (document.getElementById("cfg-port") ? document.getElementById("cfg-port").value : "7497");
 
   if (isConnected) {
     dot.className = "live-dot active";
-    text.textContent = "CONNECTED";
+    text.textContent = `CONNECTED (${port})`;
   } else if (status === "CONNECTING" || status === "STARTING") {
     dot.className = "live-dot warning";
-    text.textContent = "CONNECTING...";
+    text.textContent = `CONNECTING (${port})...`;
+  } else if (lastIbkrReachable === true) {
+    dot.className = "live-dot active";
+    text.textContent = `READY (${port} OPEN)`;
   } else if (status === "ERROR") {
     dot.className = "live-dot danger";
-    text.textContent = "DISCONNECTED";
+    text.textContent = `PORT ${port} CLOSED`;
   } else {
     dot.className = "live-dot";
-    text.textContent = "DISCONNECTED";
+    text.textContent = `OFFLINE (${port} CLOSED)`;
+  }
+}
+
+function updateStrategyButton(status, state) {
+  const btn = document.getElementById("btn-toggle-strategy");
+  const btnText = document.getElementById("btn-strategy-text");
+  if (!btn || !btnText) return;
+
+  if (status === "STARTING" || status === "CONNECTING") {
+    isStrategyRunning = true;
+    btn.className = "btn btn-danger connecting";
+    btn.disabled = false;
+    btnText.textContent = "CANCEL CONNECTING";
+  } else if (status === "STOPPING") {
+    isStrategyRunning = true;
+    btn.className = "btn btn-danger stopping";
+    btn.disabled = false;
+    btnText.textContent = "STOPPING... (FORCE KILL)";
+  } else if (isActiveStatus(status)) {
+    isStrategyRunning = true;
+    btn.className = "btn btn-danger running";
+    btn.disabled = false;
+    btnText.textContent = "STOP STRATEGY";
+  } else if (status === "ERROR") {
+    isStrategyRunning = false;
+    btn.className = "btn btn-warning error-state";
+    btn.disabled = false;
+    btnText.textContent = "RETRY CONNECTION";
+  } else {
+    isStrategyRunning = false;
+    btn.className = "btn btn-action";
+    btn.disabled = false;
+    const isTransmit = document.getElementById("cfg-transmit") && document.getElementById("cfg-transmit").checked;
+    btnText.textContent = isTransmit ? "ARM & TRANSMIT" : "RUN DRY CHECK";
   }
 }
 
@@ -486,6 +555,7 @@ function escapeHtml(text) {
 
 function handleStateUpdate(state) {
   if (!state) return;
+  currentStrategyState = state;
 
   const status = state.status || "STOPPED";
   const tag = document.getElementById("hud-signal-tag");
@@ -495,21 +565,7 @@ function handleStateUpdate(state) {
   updateTimeline(status);
 
   updateIbkrStatus(status, state.ibkr_connected);
-
-  // Update strategy toggle button
-  const btn = document.getElementById("btn-toggle-strategy");
-  const btnText = document.getElementById("btn-strategy-text");
-  if (isActiveStatus(status)) {
-    isStrategyRunning = true;
-    btn.classList.add("running");
-    btn.disabled = false;
-    btnText.textContent = "STOP MANAGER";
-  } else {
-    isStrategyRunning = false;
-    btn.classList.remove("running");
-    btn.disabled = false;
-    btnText.textContent = document.getElementById("cfg-transmit").checked ? "ARM & TRANSMIT" : "RUN DRY CHECK";
-  }
+  updateStrategyButton(status, state);
 
   // Error handling
   if (state.error && status === "ERROR") {
@@ -710,83 +766,145 @@ function updateTransmitMode() {
 async function handleToggleStrategy() {
   const btn = document.getElementById("btn-toggle-strategy");
   const btnText = document.getElementById("btn-strategy-text");
+  const status = currentStrategyState ? (currentStrategyState.status || "STOPPED") : "STOPPED";
 
-  if (isStrategyRunning) {
-    btnText.textContent = "STOPPING...";
-    btn.disabled = true;
+  // 1. If currently connecting or starting -> User clicked "CANCEL CONNECTING"
+  if (status === "CONNECTING" || status === "STARTING") {
+    btnText.textContent = "CANCELLING...";
+    appendLogLine({
+      time: new Date().toLocaleTimeString(),
+      level: "WARN",
+      message: "Connection abort requested by operator.",
+    });
     try {
       const res = await fetch("/api/strategy/stop", { method: "POST" });
       const data = await res.json();
-      console.log("Stop requested:", data);
       if (data.state && data.state.state) {
         handleStateUpdate(data.state.state);
       } else {
         isStrategyRunning = false;
-        btn.classList.remove("running");
-        btn.disabled = false;
+        updateTransmitMode();
+      }
+    } catch (e) {
+      console.error(e);
+      isStrategyRunning = false;
+      updateTransmitMode();
+    }
+    return;
+  }
+
+  // 2. If stopping -> User clicked "STOPPING... (FORCE KILL)"
+  if (status === "STOPPING") {
+    btnText.textContent = "FORCE KILLING...";
+    appendLogLine({
+      time: new Date().toLocaleTimeString(),
+      level: "ERROR",
+      message: "Emergency kill forced by operator.",
+    });
+    try {
+      const res = await fetch("/api/strategy/kill", { method: "POST" });
+      const data = await res.json();
+      if (data.state && data.state.state) handleStateUpdate(data.state.state);
+    } catch (e) {
+      console.error(e);
+    }
+    return;
+  }
+
+  // 3. If actively running (polling, in trade, etc.) -> User clicked "STOP STRATEGY"
+  if (isActiveStatus(status)) {
+    btnText.textContent = "STOPPING...";
+    btn.className = "btn btn-danger stopping";
+    try {
+      const res = await fetch("/api/strategy/stop", { method: "POST" });
+      const data = await res.json();
+      if (data.state && data.state.state) {
+        handleStateUpdate(data.state.state);
+      } else {
+        isStrategyRunning = false;
         updateTransmitMode();
       }
     } catch (err) {
       console.error("Failed to stop strategy:", err);
       isStrategyRunning = false;
-      btn.classList.remove("running");
-      btn.disabled = false;
       updateTransmitMode();
     }
-  } else {
-    btnText.textContent = "CONNECTING...";
-    btn.disabled = true;
-    const overrides = getFormData();
-    if (overrides.transmit) {
-      const modeLabel = overrides.port === 7496 ? "LIVE" : "PAPER";
-      const ok = window.confirm(`Transmit mode is enabled (${modeLabel} port ${overrides.port}). The dashboard may place and manage IBKR orders. Continue?`);
-      if (!ok) {
-        btn.disabled = false;
-        btnText.textContent = "ARM & TRANSMIT";
-        return;
-      }
-    }
+    return;
+  }
 
+  // 4. Starting or Retrying from STOPPED / ERROR / STAND_DOWN
+  const overrides = getFormData();
+
+  // If retrying from ERROR, automatically step clientId to prevent any lingering Error 326 collision
+  if (status === "ERROR") {
+    overrides.client_id = (overrides.client_id || 45) + 1;
+    const clientInput = document.getElementById("cfg-client-id");
+    if (clientInput) clientInput.value = overrides.client_id;
     appendLogLine({
       time: new Date().toLocaleTimeString(),
       level: "INFO",
-      message: `Command sent: Connecting to IBKR at ${overrides.host}:${overrides.port} (clientId=${overrides.client_id})...`,
+      message: `Retrying with fresh client ID: clientId=${overrides.client_id}...`,
     });
+  }
 
-    try {
-      const res = await fetch("/api/strategy/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(overrides),
-      });
-      const data = await res.json();
-      console.log("Start requested:", data);
-      if (data.status === "already_running") {
-        appendLogLine({
-          time: new Date().toLocaleTimeString(),
-          level: "WARN",
-          message: "Strategy was already running. Stopping previous run first...",
-        });
-        await fetch("/api/strategy/stop", { method: "POST" });
-        isStrategyRunning = false;
-        btn.classList.remove("running");
-        btn.disabled = false;
-        updateTransmitMode();
-      } else if (data.state && data.state.state) {
-        handleStateUpdate(data.state.state);
-      }
-    } catch (err) {
-      console.error("Failed to start strategy:", err);
+  if (overrides.transmit) {
+    const modeLabel = overrides.port === 7496 ? "LIVE" : "PAPER";
+    const ok = window.confirm(`Transmit mode is enabled (${modeLabel} port ${overrides.port}). The dashboard may place and manage IBKR orders. Continue?`);
+    if (!ok) {
+      btnText.textContent = "ARM & TRANSMIT";
+      return;
+    }
+  }
+
+  // Warn operator if socket appears offline before starting
+  if (lastIbkrReachable === false) {
+    appendLogLine({
+      time: new Date().toLocaleTimeString(),
+      level: "WARN",
+      message: `Warning: Port ${overrides.port} is closed. Make sure TWS/Gateway is running and API is enabled.`,
+    });
+  }
+
+  // Optimistically switch button to Cancel Connecting
+  isStrategyRunning = true;
+  btn.className = "btn btn-danger connecting";
+  btn.disabled = false;
+  btnText.textContent = "CANCEL CONNECTING";
+
+  appendLogLine({
+    time: new Date().toLocaleTimeString(),
+    level: "INFO",
+    message: `Connecting to IBKR at ${overrides.host}:${overrides.port} (clientId=${overrides.client_id})...`,
+  });
+
+  try {
+    const res = await fetch("/api/strategy/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(overrides),
+    });
+    const data = await res.json();
+    if (data.status === "already_running") {
       appendLogLine({
         time: new Date().toLocaleTimeString(),
-        level: "ERROR",
-        message: `API request failed: ${err.message}`,
+        level: "WARN",
+        message: "Strategy was already running. Stopping previous run first...",
       });
+      await fetch("/api/strategy/stop", { method: "POST" });
       isStrategyRunning = false;
-      btn.classList.remove("running");
-      btn.disabled = false;
       updateTransmitMode();
+    } else if (data.state && data.state.state) {
+      handleStateUpdate(data.state.state);
     }
+  } catch (err) {
+    console.error("Failed to start strategy:", err);
+    appendLogLine({
+      time: new Date().toLocaleTimeString(),
+      level: "ERROR",
+      message: `API request failed: ${err.message}`,
+    });
+    isStrategyRunning = false;
+    updateTransmitMode();
   }
 }
 
