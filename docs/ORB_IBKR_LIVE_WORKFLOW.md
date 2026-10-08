@@ -33,6 +33,37 @@ python -m pip install ".[live]"
 python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000
 ```
 
+## Dashboard Workflow
+
+Start the local dashboard:
+
+```bash
+python -m dashboard.server
+```
+
+Then open `http://127.0.0.1:8060`. If another service is already using the port, run uvicorn directly with a different port:
+
+```bash
+python -m uvicorn dashboard.server:app --host 127.0.0.1 --port 8061
+```
+
+Use the dashboard in this order:
+
+1. Open Settings and confirm the IBKR host, paper/live port, client ID, optional account ID, capital, opening range, risk, and timing parameters.
+2. Leave the mode switch on Dry run first. This connects to IBKR, waits for the completed opening range, computes the signal, and displays the bracket without placing orders.
+3. Review the signal, OR/ATR ratio, entry, stop, target, breakeven trigger, share count, and console logs.
+4. Only after paper testing, enable Transmit mode. The dashboard asks for confirmation before it routes orders.
+5. Keep the dashboard process running through the session. It monitors entry fills, cancels stale entries at the cutoff, moves the stop to breakeven at 6R, and flattens at the configured time.
+
+The dashboard control buttons are intentionally distinct:
+
+- `RUN DRY CHECK` / `ARM & TRANSMIT`: starts a new session using the current settings. Transmit mode places real IBKR orders after confirmation.
+- `Stop`: requests a graceful stop. Use this when the worker can exit at the next safe checkpoint.
+- `Restart`: tears down the current worker, clears session state, and starts again with the current settings.
+- `Flatten Now`: submits an immediate market flatten order for the active contract context. Always verify the final position in TWS/Gateway.
+- `Kill`: emergency-disconnects the dashboard from IBKR. It does not guarantee that broker-side orders were cancelled, so manually inspect TWS/Gateway before restarting.
+- `Reset Session`: clears the stopped session and console. It is refused while a worker is still active.
+
 ## Paper Order Submission
 
 ```bash
@@ -101,4 +132,3 @@ python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.y
 - Order management is enabled unless `--no-manage` is explicitly supplied.
 - Off-hours testing `--off-hours-test` is strictly blocked on live accounts.
 - TWS/IB Gateway order state should always be checked manually after submission.
-

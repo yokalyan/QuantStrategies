@@ -18,6 +18,10 @@ document.addEventListener("DOMContentLoaded", () => {
   connectWebSocket();
 
   document.getElementById("btn-toggle-strategy").addEventListener("click", handleToggleStrategy);
+  document.getElementById("btn-restart-strategy").addEventListener("click", handleRestartStrategy);
+  document.getElementById("btn-flatten-now").addEventListener("click", handleFlattenNow);
+  document.getElementById("btn-kill-strategy").addEventListener("click", handleKillStrategy);
+  document.getElementById("cfg-transmit").addEventListener("change", updateTransmitMode);
   document.getElementById("btn-clear-console").addEventListener("click", () => {
     document.getElementById("terminal-body").innerHTML = "";
   });
@@ -32,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-toggle-monthly").addEventListener("click", () => switchPnlView("monthly"));
   document.getElementById("btn-toggle-weekly").addEventListener("click", () => switchPnlView("weekly"));
   document.getElementById("config-form").addEventListener("submit", handleSaveConfig);
+  updateTransmitMode();
 });
 
 // Top Tabs Controller
@@ -71,8 +76,14 @@ function initModals() {
   const closeBtn = document.getElementById("btn-close-modal");
   const cancelBtn = document.getElementById("btn-cancel-modal");
 
-  const openModal = () => modal.classList.add("open");
-  const closeModal = () => modal.classList.remove("open");
+  const openModal = () => {
+    modal.hidden = false;
+    modal.classList.add("open");
+  };
+  const closeModal = () => {
+    modal.classList.remove("open");
+    modal.hidden = true;
+  };
 
   openBtn.addEventListener("click", openModal);
   closeBtn.addEventListener("click", closeModal);
@@ -247,6 +258,15 @@ async function loadConfig() {
     // Update shares badge
     const cap = data.signal_capital || 5000;
     document.getElementById("hud-shares-badge").textContent = `Calculated Sizing ($${cap.toLocaleString()} basis)`;
+    document.querySelector(".metric-label").textContent = `Opening Range (${params.opening_range_minutes || 15}m)`;
+    const bandText = document.getElementById("gauge-band-text");
+    if (bandText) {
+      bandText.textContent = `Target Band: ${(params.or_atr_min || 0.20).toFixed(2)} — ${(params.or_atr_max || 0.35).toFixed(2)}`;
+    }
+    document.getElementById("hud-or-range").textContent = "--";
+    document.getElementById("hud-or-bounds").textContent = "Waiting for completed opening range";
+    document.getElementById("hud-atr").textContent = "--";
+    document.getElementById("hud-or-mid").textContent = "--";
 
     handlePortChange();
   } catch (err) {
@@ -470,21 +490,25 @@ function handleStateUpdate(state) {
   const status = state.status || "STOPPED";
   const tag = document.getElementById("hud-signal-tag");
   tag.textContent = status;
-  tag.className = `live-tag ${status === "IN_TRADE" || status === "BRACKET_SUBMITTED" ? "active" : ""}`;
+  tag.className = `live-tag ${tagClassForStatus(status)}`;
+  updateRunStatePanel(state);
+  updateTimeline(status);
 
   updateIbkrStatus(status, state.ibkr_connected);
 
   // Update strategy toggle button
   const btn = document.getElementById("btn-toggle-strategy");
   const btnText = document.getElementById("btn-strategy-text");
-  if (status === "STARTING" || status === "CONNECTING" || status === "POLLING" || status === "BRACKET_SUBMITTED" || status === "IN_TRADE" || status === "PENDING_ENTRY") {
+  if (isActiveStatus(status)) {
     isStrategyRunning = true;
     btn.classList.add("running");
-    btnText.textContent = "STOP STRATEGY";
+    btn.disabled = false;
+    btnText.textContent = "STOP MANAGER";
   } else {
     isStrategyRunning = false;
     btn.classList.remove("running");
-    btnText.textContent = "START STRATEGY";
+    btn.disabled = false;
+    btnText.textContent = document.getElementById("cfg-transmit").checked ? "ARM & TRANSMIT" : "RUN DRY CHECK";
   }
 
   // Error handling
@@ -629,6 +653,59 @@ function handleStateUpdate(state) {
   }
 }
 
+function isActiveStatus(status) {
+  return ["STARTING", "CONNECTING", "POLLING", "BRACKET_SUBMITTED", "PENDING_ENTRY", "IN_TRADE", "STOPPING", "FLATTEN_REQUESTED"].includes(status);
+}
+
+function tagClassForStatus(status) {
+  if (["IN_TRADE", "PENDING_ENTRY", "BRACKET_SUBMITTED"].includes(status)) return "active";
+  if (["ERROR", "KILLED", "EXIT_STOP"].includes(status)) return "danger";
+  if (["STAND_DOWN", "CANCELLED", "READY_DRY_RUN", "STOPPING"].includes(status)) return "warning";
+  return "";
+}
+
+function updateRunStatePanel(state) {
+  const status = state.status || "STOPPED";
+  const stateValue = document.getElementById("run-state-value");
+  const nextAction = document.getElementById("run-next-action");
+  const dot = document.getElementById("state-dot");
+  if (stateValue) stateValue.textContent = status.replaceAll("_", " ");
+  if (nextAction) nextAction.textContent = state.next_action || "Review settings, then run a dry check.";
+  if (dot) dot.className = `state-dot ${tagClassForStatus(status) || "neutral"}`;
+}
+
+function updateTimeline(status) {
+  const stepMap = {
+    STARTING: "preflight",
+    CONNECTING: "preflight",
+    POLLING: "signal",
+    READY_DRY_RUN: "signal",
+    STAND_DOWN: "signal",
+    BRACKET_SUBMITTED: "entry",
+    PENDING_ENTRY: "entry",
+    CANCELLED: "entry",
+    IN_TRADE: "manage",
+    EXIT_PROFIT: "flatten",
+    EXIT_STOP: "flatten",
+    FLATTEN_REQUESTED: "flatten",
+    FLATTENED: "flatten",
+  };
+  const active = stepMap[status] || "preflight";
+  document.querySelectorAll(".timeline-step").forEach((el) => {
+    el.classList.toggle("active", el.dataset.step === active);
+  });
+}
+
+function updateTransmitMode() {
+  const checked = document.getElementById("cfg-transmit").checked;
+  const label = document.getElementById("transmit-mode-label");
+  const sub = document.getElementById("transmit-mode-sub");
+  const btnText = document.getElementById("btn-strategy-text");
+  if (label) label.textContent = checked ? "Transmit" : "Dry run";
+  if (sub) sub.textContent = checked ? "Orders can route to IBKR" : "No IBKR orders";
+  if (!isStrategyRunning && btnText) btnText.textContent = checked ? "ARM & TRANSMIT" : "RUN DRY CHECK";
+}
+
 // Strategy Toggle Handler
 async function handleToggleStrategy() {
   const btn = document.getElementById("btn-toggle-strategy");
@@ -646,25 +723,34 @@ async function handleToggleStrategy() {
       } else {
         isStrategyRunning = false;
         btn.classList.remove("running");
-        btnText.textContent = "START STRATEGY";
         btn.disabled = false;
+        updateTransmitMode();
       }
     } catch (err) {
       console.error("Failed to stop strategy:", err);
       isStrategyRunning = false;
       btn.classList.remove("running");
-      btnText.textContent = "START STRATEGY";
       btn.disabled = false;
+      updateTransmitMode();
     }
   } else {
     btnText.textContent = "CONNECTING...";
     btn.disabled = true;
     const overrides = getFormData();
+    if (overrides.transmit) {
+      const modeLabel = overrides.port === 7496 ? "LIVE" : "PAPER";
+      const ok = window.confirm(`Transmit mode is enabled (${modeLabel} port ${overrides.port}). The dashboard may place and manage IBKR orders. Continue?`);
+      if (!ok) {
+        btn.disabled = false;
+        btnText.textContent = "ARM & TRANSMIT";
+        return;
+      }
+    }
 
     appendLogLine({
       time: new Date().toLocaleTimeString(),
       level: "INFO",
-      message: `Command sent: Connecting to IBKR at 127.0.0.1:${overrides.port} (clientId=${overrides.client_id})...`,
+      message: `Command sent: Connecting to IBKR at ${overrides.host}:${overrides.port} (clientId=${overrides.client_id})...`,
     });
 
     try {
@@ -684,8 +770,8 @@ async function handleToggleStrategy() {
         await fetch("/api/strategy/stop", { method: "POST" });
         isStrategyRunning = false;
         btn.classList.remove("running");
-        btnText.textContent = "START STRATEGY";
         btn.disabled = false;
+        updateTransmitMode();
       } else if (data.state && data.state.state) {
         handleStateUpdate(data.state.state);
       }
@@ -698,28 +784,79 @@ async function handleToggleStrategy() {
       });
       isStrategyRunning = false;
       btn.classList.remove("running");
-      btnText.textContent = "START STRATEGY";
       btn.disabled = false;
+      updateTransmitMode();
     }
+  }
+}
+
+async function handleRestartStrategy() {
+  const overrides = getFormData();
+  const ok = window.confirm("Restart will stop the current dashboard worker, clear state, and start again with current settings. Continue?");
+  if (!ok) return;
+  try {
+    const res = await fetch("/api/strategy/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(overrides),
+    });
+    const data = await res.json();
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "WARN", message: "Restart requested from dashboard." });
+    if (data.state && data.state.state) handleStateUpdate(data.state.state);
+  } catch (err) {
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "ERROR", message: `Restart failed: ${err.message}` });
+  }
+}
+
+async function handleFlattenNow() {
+  const ok = window.confirm("Flatten now will attempt to close any active TQQQ position through IBKR. Continue only if you have verified the current session.");
+  if (!ok) return;
+  try {
+    const res = await fetch("/api/strategy/flatten", { method: "POST" });
+    const data = await res.json();
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "WARN", message: `Flatten requested: ${data.status}` });
+    if (data.state && data.state.state) handleStateUpdate(data.state.state);
+  } catch (err) {
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "ERROR", message: `Flatten failed: ${err.message}` });
+  }
+}
+
+async function handleKillStrategy() {
+  const ok = window.confirm("Emergency kill disconnects the dashboard from IBKR. It does not guarantee external IBKR orders are cancelled. Verify TWS manually after killing. Continue?");
+  if (!ok) return;
+  try {
+    const res = await fetch("/api/strategy/kill", { method: "POST" });
+    const data = await res.json();
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "ERROR", message: "Emergency kill requested from dashboard." });
+    if (data.state && data.state.state) handleStateUpdate(data.state.state);
+  } catch (err) {
+    appendLogLine({ time: new Date().toLocaleTimeString(), level: "ERROR", message: `Kill failed: ${err.message}` });
   }
 }
 
 async function handleResetSession() {
   const btn = document.getElementById("btn-toggle-strategy");
-  const btnText = document.getElementById("btn-strategy-text");
   try {
     const res = await fetch("/api/strategy/reset", { method: "POST" });
     const data = await res.json();
-    document.getElementById("terminal-body").innerHTML = "";
-    appendLogLine({
-      time: new Date().toLocaleTimeString(),
-      level: "SUCCESS",
-      message: "Live session state and logs successfully reset.",
-    });
-    isStrategyRunning = false;
-    btn.classList.remove("running");
-    btnText.textContent = "START STRATEGY";
-    btn.disabled = false;
+    if (data.status === "reset_refused") {
+      appendLogLine({
+        time: new Date().toLocaleTimeString(),
+        level: "WARN",
+        message: "Reset refused while the strategy worker is active. Stop or kill first.",
+      });
+    } else {
+      document.getElementById("terminal-body").innerHTML = "";
+      appendLogLine({
+        time: new Date().toLocaleTimeString(),
+        level: "SUCCESS",
+        message: "Live session state and logs successfully reset.",
+      });
+      isStrategyRunning = false;
+      btn.classList.remove("running");
+      btn.disabled = false;
+      updateTransmitMode();
+    }
     handleStateUpdate(data.state.state);
   } catch (err) {
     console.error("Failed to reset session:", err);
@@ -757,6 +894,7 @@ function handlePortChange() {
 
 function getFormData() {
   return {
+    host: document.getElementById("cfg-host").value || "127.0.0.1",
     opening_range_minutes: parseInt(document.getElementById("cfg-opening-range").value, 10),
     capital: parseFloat(document.getElementById("cfg-capital").value),
     or_atr_min: parseFloat(document.getElementById("cfg-atr-min").value),
@@ -769,8 +907,10 @@ function getFormData() {
     flatten_time: document.getElementById("cfg-flatten").value,
     port: parseInt(document.getElementById("cfg-port").value, 10),
     client_id: parseInt(document.getElementById("cfg-client-id").value, 10),
+    account: document.getElementById("cfg-account").value.trim(),
     poll_seconds: parseInt(document.getElementById("cfg-poll-seconds").value, 10),
     off_hours_test: document.getElementById("cfg-off-hours").checked,
+    transmit: document.getElementById("cfg-transmit").checked,
   };
 }
 
@@ -785,7 +925,9 @@ async function handleSaveConfig(e) {
     });
     const data = await res.json();
     if (data.status === "ok") {
-      document.getElementById("config-modal").classList.remove("open");
+      const modal = document.getElementById("config-modal");
+      modal.classList.remove("open");
+      modal.hidden = true;
       loadConfig();
       // Show notification in terminal
       appendLogLine({

@@ -137,10 +137,28 @@ def stop_strategy() -> dict[str, Any]:
     return {"status": "stopped", "state": runner.get_status()}
 
 
+@app.post("/api/strategy/kill")
+def kill_strategy() -> dict[str, Any]:
+    runner.kill()
+    return {"status": "killed", "state": runner.get_status()}
+
+
+@app.post("/api/strategy/flatten")
+def flatten_strategy() -> dict[str, Any]:
+    ok = runner.flatten_now()
+    return {"status": "flatten_requested" if ok else "flatten_failed", "state": runner.get_status()}
+
+
+@app.post("/api/strategy/restart")
+def restart_strategy(payload: dict[str, Any]) -> dict[str, Any]:
+    started = runner.restart(payload)
+    return {"status": "started" if started else "already_running", "state": runner.get_status()}
+
+
 @app.post("/api/strategy/reset")
 def reset_strategy() -> dict[str, Any]:
-    runner.reset()
-    return {"status": "reset", "state": runner.get_status()}
+    ok = runner.reset()
+    return {"status": "reset" if ok else "reset_refused", "state": runner.get_status()}
 
 
 @app.websocket("/ws/live")

@@ -36,7 +36,10 @@ python -m backtest_engine.cli fetch-intraday configs/midpoint_stop_orb_intraday.
 python -m backtest_engine.cli run-intraday-orb configs/midpoint_stop_orb_intraday.yaml
 python -m backtest_engine.cli orb-signal configs/midpoint_stop_orb_intraday.yaml --capital 5000
 python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000
+python -m dashboard.server
 ```
+
+The dashboard runs locally at `http://127.0.0.1:8060` by default and provides the guided IBKR dry-run, transmit, stop, restart, flatten, and kill controls for the TQQQ midpoint ORB strategy. See `docs/ORB_IBKR_LIVE_WORKFLOW.md` for the live operating workflow.
 
 The first `fetch` uses yfinance and writes Parquet files under `data/cache`. After that, the backtest runs from local cache with `data_source.mode: cache`.
 

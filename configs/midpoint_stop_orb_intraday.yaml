@@ -1,10 +1,10 @@
 strategy:
   name: midpoint_stop_orb_intraday
   params:
-    opening_range_minutes: 5
+    opening_range_minutes: 15
     atr_lookback: 20
-    or_atr_min: 0.15
-    or_atr_max: 0.25
+    or_atr_min: 0.2
+    or_atr_max: 0.35
     entry_cutoff_time: '10:30'
     flatten_time: '15:30'
     risk_per_trade: 0.006
