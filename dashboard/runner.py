@@ -277,11 +277,12 @@ class StrategyRunner:
             connected = False
             last_conn_err = None
             base_client_id = client_id
+            curr_client_id = base_client_id
+            max_connect_attempts = int(overrides.get("connect_attempts", 12))
 
-            for attempt in range(4):
+            for attempt in range(1, max_connect_attempts + 1):
                 if self.stop_requested:
                     return
-                curr_client_id = base_client_id + attempt
                 try:
                     ib.connect(host, port, clientId=curr_client_id, timeout=5)
                     connected = True
@@ -292,10 +293,19 @@ class StrategyRunner:
                     err_str = str(e).lower()
                     if "client id is already in use" in err_str or "326" in err_str or "peer closed" in err_str:
                         self.log("WARN", f"Client ID {curr_client_id} in use, trying clientId={curr_client_id + 1}...")
+                        curr_client_id += 1
                         time.sleep(0.5)
                         continue
-                    else:
-                        break
+                    if isinstance(e, (ConnectionRefusedError, TimeoutError, OSError)):
+                        self.state["next_action"] = (
+                            f"IBKR socket is not accepting connections yet. "
+                            f"Retrying {attempt}/{max_connect_attempts} on {host}:{port}."
+                        )
+                        self.log("WARN", f"IBKR not ready on {host}:{port}; retrying connection attempt {attempt}/{max_connect_attempts}...")
+                        self._notify({"type": "state", "data": self.state})
+                        time.sleep(2)
+                        continue
+                    break
 
             if not connected:
                 if isinstance(last_conn_err, (ConnectionRefusedError, OSError)):
