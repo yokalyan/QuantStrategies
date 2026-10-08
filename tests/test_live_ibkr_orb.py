@@ -126,3 +126,110 @@ def test_replace_stop_cancels_old_stop_and_sends_breakeven_stop():
     assert new_trade.order.auxPrice == 47.45
     assert new_trade.order.ocaGroup == stop_loss.ocaGroup
     assert new_trade.order.transmit is True
+
+
+def test_replace_stop_uses_custom_fill_price():
+    ib = FakeIB()
+    _, _, stop_loss = _build_bracket_orders(ib, recommendation(), None, FakeOrder, FakeLimitOrder)
+    old_trade = FakeTrade(stop_loss)
+
+    new_trade = _replace_stop_order(ib, object(), recommendation(), old_trade, None, FakeOrder, stop_price=47.52)
+
+    assert new_trade.order.auxPrice == 47.52
+
+
+def test_position_size_matches_by_symbol_and_conid():
+    from backtest_engine.live_ibkr_orb import _position_size_for_contract
+
+    class FakePosition:
+        def __init__(self, symbol, con_id, position):
+            self.contract = type("Contract", (), {"symbol": symbol, "conId": con_id})()
+            self.position = position
+
+    class MockIB:
+        def positions(self):
+            return [
+                FakePosition("TQQQ", 12345, 100),
+                FakePosition("SPY", 99999, 50),
+            ]
+
+    ib = MockIB()
+    contract_with_id = type("Contract", (), {"symbol": "TQQQ", "conId": 12345})()
+    contract_without_id = type("Contract", (), {"symbol": "TQQQ", "conId": None})()
+
+    assert _position_size_for_contract(ib, contract_with_id) == 100
+    assert _position_size_for_contract(ib, contract_without_id) == 100
+
+
+def test_breakeven_reached_condition():
+    from backtest_engine.live_ibkr_orb import _breakeven_reached
+
+    rec = recommendation()  # direction = 1 (bullish), breakeven_trigger = 49.03
+    assert not _breakeven_reached(rec, float("nan"))
+    assert not _breakeven_reached(rec, 48.50)
+    assert _breakeven_reached(rec, 49.03)
+    assert _breakeven_reached(rec, 49.50)
+
+    # Bearish test
+    rec_short = recommendation()
+    rec_short.direction = -1
+    rec_short.breakeven_trigger = 45.00
+    assert not _breakeven_reached(rec_short, float("nan"))
+    assert not _breakeven_reached(rec_short, 45.50)
+    assert _breakeven_reached(rec_short, 45.00)
+    assert _breakeven_reached(rec_short, 44.50)
+
+
+def test_off_hours_safety_block_raises_on_live_account():
+    import pytest
+    from pathlib import Path
+    from backtest_engine.live_ibkr_orb import IbkrOrbSettings, run_live_ibkr_orb
+
+    # Live port 7496 with off_hours_test=True should raise RuntimeError
+    live_settings = IbkrOrbSettings(
+        config_path=Path("configs/midpoint_stop_orb_intraday.yaml"),
+        capital=5000,
+        host="127.0.0.1",
+        port=7496,
+        client_id=45,
+        account="U1234567",
+        confirm=False,
+        transmit=False,
+        wait=False,
+        poll_seconds=10,
+        signal_buffer_seconds=5,
+        manage_orders=False,
+        off_hours_test=True,
+    )
+    with pytest.raises(RuntimeError, match="SAFETY BLOCK"):
+        run_live_ibkr_orb(live_settings)
+
+
+def test_poll_ibkr_bars_off_hours_finds_recent_session():
+    from datetime import datetime
+    from backtest_engine.live_ibkr_orb import _poll_ibkr_bars
+
+    class FakeBar:
+        def __init__(self, dt_str, price):
+            self.date = dt_str
+            self.open = price
+            self.high = price + 0.1
+            self.low = price - 0.1
+            self.close = price
+            self.volume = 1000
+
+    bars = []
+    # Create 20 bars on a past day between 09:30 and 09:50
+    for m in range(20):
+        bars.append(FakeBar(f"2026-10-06 09:{30+m:02d}:00", 50.0))
+
+    class MockIB:
+        def reqHistoricalData(self, *args, **kwargs):
+            return bars
+
+    ib = MockIB()
+    frame = _poll_ibkr_bars(ib, object(), opening_range_minutes=15, poll_seconds=1, off_hours_test=True)
+    assert len(frame) == 20
+    assert frame["datetime"].iloc[0].hour == 9
+
+

@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TQQQ Midpoint ORB | Institutional Quant Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-badge">
+        <span class="logo-icon">⚡</span>
+        <div class="logo-text">
+          <h1>TQQQ ORB QUANT</h1>
+          <span class="sub-logo">Opening Range Breakout Engine</span>
+        </div>
+      </div>
+      <div class="header-pill" title="Local Dashboard WebSocket connection">
+        <span class="live-dot" id="system-status-dot"></span>
+        <span style="opacity: 0.6; margin-right: 2px;">SERVER:</span>
+        <span id="system-status-text">DISCONNECTED</span>
+      </div>
+      <div class="header-pill" id="ibkr-pill-container" title="Interactive Brokers TWS / Gateway API connection">
+        <span class="live-dot" id="ibkr-status-dot"></span>
+        <span style="opacity: 0.6; margin-right: 2px;">IBKR:</span>
+        <span id="ibkr-status-text">DISCONNECTED</span>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <!-- Quick TQQQ Ticker Banner -->
+      <div class="ticker-box" title="TQQQ Current Status: Bias is NEUTRAL before opening range break (09:30-09:45), then switches to BULLISH or BEARISH">
+        <span class="ticker-name">NASDAQ: TQQQ</span>
+        <span class="ticker-price" id="tqqq-last-price">$82.31</span>
+        <span class="ticker-bias-badge" id="tqqq-bias-badge">BIAS: NEUTRAL</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="broker-info-pill" id="broker-mode-pill-box">
+        <span class="broker-icon">🏛️</span>
+        <span id="broker-mode-pill">IBKR Paper (7497)</span>
+      </div>
+      <button class="btn btn-primary" id="btn-config-toggle">
+        <span class="icon">⚙️</span> Settings
+      </button>
+      <button class="btn btn-action" id="btn-toggle-strategy">
+        <span class="pulse-indicator"></span>
+        <span id="btn-strategy-text">START STRATEGY</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Top Navigation Tabs Bar -->
+  <nav class="nav-tabs-bar">
+    <div class="nav-tabs-container">
+      <button class="nav-tab active" id="tab-btn-live">
+        <span class="tab-icon">⚡</span>
+        <span>Live Trading Terminal</span>
+      </button>
+      <button class="nav-tab" id="tab-btn-backtest">
+        <span class="tab-icon">📊</span>
+        <span>Backtest Analytics &amp; Alpha Research</span>
+      </button>
+    </div>
+  </nav>
+
+  <main class="app-container">
+    <!-- ========================================== -->
+    <!-- TAB 1: LIVE TRADING TERMINAL               -->
+    <!-- ========================================== -->
+    <div class="tab-pane active" id="pane-live">
+      <div class="section-label-banner">
+        <span class="section-tag">⚡ Live Session Execution &amp; Real-Time Bracket Management</span>
+        <span class="section-sub">Real-Time TQQQ Market Feeds • IBKR Order Routing • Dynamic 15m Midpoint Stop Loss</span>
+      </div>
+
+      <section class="dashboard-row grid-2-col">
+        <!-- Live Strategy & Signals Card -->
+        <div class="panel glass-card">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">🎯</span>
+              <h2>Active Signal &amp; Bracket HUD</h2>
+            </div>
+            <span class="live-tag" id="hud-signal-tag">STANDBY</span>
+          </div>
+
+          <div class="hud-content">
+            <!-- OR Metrics -->
+            <div class="hud-metrics-row">
+              <div class="metric-box">
+                <span class="metric-label">Opening Range (15m)</span>
+                <span class="metric-val mono" id="hud-or-range">$1.0000</span>
+                <span class="metric-sub" id="hud-or-bounds">Low: 81.63 | High: 82.63</span>
+              </div>
+
+              <div class="metric-box">
+                <span class="metric-label">Trailing ATR</span>
+                <span class="metric-val mono" id="hud-atr">2.8925</span>
+                <span class="metric-sub" id="hud-atr-lookback">Lookback: 20 Days</span>
+              </div>
+
+              <div class="metric-box">
+                <span class="metric-label">Midpoint Stop</span>
+                <span class="metric-val mono highlight" id="hud-or-mid">$82.13</span>
+                <span class="metric-sub">50% Retracement Cut</span>
+              </div>
+            </div>
+
+            <!-- Visual OR / ATR Gauge Meter -->
+            <div class="gauge-container">
+              <div class="gauge-header">
+                <div class="gauge-title-group">
+                  <span class="gauge-title">OR / ATR Volatility Filter</span>
+                  <span class="gauge-subtitle">Evaluates morning range expansion vs 20-day daily ATR baseline</span>
+                </div>
+                <div class="gauge-val-box">
+                  <span class="gauge-ratio-label">Ratio (OR / ATR)</span>
+                  <span class="gauge-ratio-val mono" id="hud-or-ratio">--</span>
+                </div>
+              </div>
+
+              <!-- 3-Tier Visual Gauge Bar -->
+              <div class="gauge-track" id="gauge-track">
+                <div class="gauge-zone zone-compressed" id="zone-compressed" title="Too Narrow: Chop / False Breakout Risk">
+                  <span class="zone-text">COMPRESSED (CHOP)</span>
+                </div>
+                <div class="gauge-zone zone-sweetspot" id="zone-sweetspot" title="Sweet Spot: Optimal Volatility Expansion">
+                  <span class="zone-text">SWEET SPOT (TRADE ZONE)</span>
+                </div>
+                <div class="gauge-zone zone-expanded" id="zone-expanded" title="Blown Out: Exhaustion / Reversal Risk">
+                  <span class="zone-text">EXHAUSTED (LATE)</span>
+                </div>
+                <div class="gauge-needle" id="gauge-needle" style="left: 50%;">
+                  <div class="needle-tip"></div>
+                  <div class="needle-label" id="needle-val-label">--</div>
+                </div>
+              </div>
+
+              <!-- Dynamic Boundaries Row -->
+              <div class="gauge-labels">
+                <span class="gauge-boundary-label">0.05 (Min Scale)</span>
+                <span class="gauge-band-badge" id="gauge-band-text">Target Band: 0.15 — 0.25</span>
+                <span class="gauge-boundary-label">0.45 (Max Scale)</span>
+              </div>
+
+              <!-- Status & Diagnostic Explanation Card -->
+              <div class="gauge-status-card" id="gauge-status-card">
+                <div class="status-indicator-row">
+                  <span class="status-icon" id="gauge-status-icon">⚪</span>
+                  <span class="status-headline" id="gauge-status-text">Awaiting market open or session data...</span>
+                </div>
+                <div class="status-detail-text" id="gauge-status-detail">
+                  The strategy evaluates opening volatility against your active parameter limits before committing capital.
+                </div>
+              </div>
+
+              <!-- Institutional Filter Guide -->
+              <div class="gauge-explainer">
+                <span class="explainer-icon">ℹ️</span>
+                <span class="explainer-content">
+                  <strong>Why this filter exists:</strong> If the opening range is too narrow (&lt; min), breakouts get trapped in noise and chop. If the range is already too wide (&gt; max), the day's move is exhausted and risks sharp reversal. Trades trigger only when volatility is in the statistical <em>Sweet Spot</em>.
+                </span>
+              </div>
+            </div>
+
+            <!-- Active Bracket Orders Display -->
+            <div class="bracket-display-card">
+              <div class="bracket-header">
+                <span class="bracket-title">🏛️ IBKR CONTINGENT OCA BRACKET</span>
+                <span class="shares-badge" id="hud-shares-badge">60 Shares ($5,000 basis)</span>
+              </div>
+              <div class="bracket-orders-grid">
+                <div class="bracket-order-item entry">
+                  <div class="ord-header">
+                    <span class="ord-badge">STEP 1 • ENTRY</span>
+                    <span class="ord-role">Breakout</span>
+                  </div>
+                  <span class="ord-side" id="bracket-entry-side">SELL SHORT STOP</span>
+                  <span class="ord-price mono" id="bracket-entry-price">$81.63</span>
+                  <span class="ord-note" id="bracket-entry-note">Valid until 10:30 ET</span>
+                </div>
+
+                <div class="bracket-order-item stop">
+                  <div class="ord-header">
+                    <span class="ord-badge danger">STEP 2 • STOP LOSS</span>
+                    <span class="ord-role danger">1.0R Initial</span>
+                  </div>
+                  <span class="ord-side">MIDPOINT STOP</span>
+                  <span class="ord-price mono danger" id="bracket-stop-price">$82.13</span>
+                  <span class="ord-note">50% Retracement Cut</span>
+                </div>
+
+                <div class="bracket-order-item target">
+                  <div class="ord-header">
+                    <span class="ord-badge positive">STEP 3 • TARGET</span>
+                    <span class="ord-role positive">Take Profit</span>
+                  </div>
+                  <span class="ord-side">10.0R LIMIT</span>
+                  <span class="ord-price mono positive" id="bracket-target-price">$76.63</span>
+                  <span class="ord-note">Full Runner Target</span>
+                </div>
+
+                <div class="bracket-order-item breakeven">
+                  <div class="ord-header">
+                    <span class="ord-badge highlight">STEP 4 • TRAIL</span>
+                    <span class="ord-role highlight">+6.0R Trigger</span>
+                  </div>
+                  <span class="ord-side">BREAKEVEN STOP</span>
+                  <span class="ord-price mono highlight" id="bracket-be-price">$78.63</span>
+                  <span class="ord-note">Move stop to entry price</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Active Position Live Box -->
+            <div class="position-tracker" id="position-tracker">
+              <div class="pos-info">
+                <span class="pos-label">Live Active Position:</span>
+                <span class="pos-val" id="pos-status-text">FLAT (Waiting for entry trigger)</span>
+              </div>
+              <div class="pos-pnl-group">
+                <span class="pos-pnl-label">Unrealized P&amp;L:</span>
+                <span class="pos-pnl-val mono" id="pos-unrealized-pnl">$0.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Terminal / Strategy Console -->
+        <div class="panel glass-card console-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">💻</span>
+              <h2>Strategy Engine Live Console</h2>
+            </div>
+            <div class="console-actions">
+              <button class="btn btn-xs" id="btn-reset-session" title="Reset live session state, stop orders, and clear terminal">Reset Session</button>
+              <button class="btn btn-xs" id="btn-clear-console" title="Clear log messages">Clear Logs</button>
+              <span class="console-pulse"></span>
+            </div>
+          </div>
+          <div class="terminal-body" id="terminal-body">
+            <div class="log-line info">
+              <span class="log-time">[SYSTEM]</span>
+              <span class="log-msg">Quant Engine Dashboard initialized. Ready to connect with IBKR socket.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: BACKTEST RESEARCH & QUANT ANALYTICS -->
+    <!-- ========================================== -->
+    <div class="tab-pane" id="pane-backtest">
+      <!-- Data Freshness & Update Guide Banner -->
+      <div class="freshness-card">
+        <div class="freshness-info">
+          <h3><span>📅</span> Intraday Data Coverage: 2010-02-11 to 2025-06-02 (3,858 Trading Days)</h3>
+          <p>Verified historical backtest contains <strong>1,322 paired executions</strong> on TQQQ 1-minute bars. To extend from June 2025 up to today's date, use the <strong>free IBKR Historical Data API</strong> (available directly via your connected TWS/Gateway account) or free Yahoo Finance trailing backfill.</p>
+        </div>
+        <div class="freshness-actions">
+          <span class="kpi-sub-pill" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #6ee7b7;">1,322 VERIFIED FILLS</span>
+        </div>
+      </div>
+
+      <!-- KPI Stats Banner -->
+      <div class="section-label-banner">
+        <span class="section-tag">📊 Quantitative Strategy Benchmarks (2010 – 2025)</span>
+        <span class="section-sub">Opening Range 15m • 20-Day ATR Filter [0.20 - 0.35] • 10.0R Profit Target • 6.0R Breakeven Stop</span>
+      </div>
+
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <span class="kpi-title">Current Equity</span>
+          <div class="kpi-value-row">
+            <span class="kpi-value" id="kpi-current-equity">$283,877</span>
+            <span class="kpi-badge positive" id="kpi-return-pct">+183.9%</span>
+          </div>
+          <span class="kpi-sub" id="kpi-start-date">Started 2010-02-11 ($100k basis)</span>
+        </div>
+
+        <div class="kpi-card">
+          <span class="kpi-title">Total P&amp;L</span>
+          <div class="kpi-value-row">
+            <span class="kpi-value positive" id="kpi-total-pnl">+$183,877</span>
+          </div>
+          <span class="kpi-sub" id="kpi-win-stats">414 Wins / 908 Losses</span>
+        </div>
+
+        <div class="kpi-card">
+          <span class="kpi-title">CAGR / Sharpe</span>
+          <div class="kpi-value-row">
+            <span class="kpi-value highlight" id="kpi-cagr">7.06%</span>
+            <span class="kpi-sub-pill" id="kpi-sharpe">Sharpe 0.61</span>
+          </div>
+          <span class="kpi-sub">Annualized Risk-Adjusted</span>
+        </div>
+
+        <div class="kpi-card">
+          <span class="kpi-title">Max Drawdown</span>
+          <div class="kpi-value-row">
+            <span class="kpi-value danger" id="kpi-max-dd">-18.7%</span>
+          </div>
+          <span class="kpi-sub">Controlled 15m Midpoint Cap</span>
+        </div>
+
+        <div class="kpi-card">
+          <span class="kpi-title">Win Rate &amp; Profit Factor</span>
+          <div class="kpi-value-row">
+            <span class="kpi-value" id="kpi-win-rate">31.3%</span>
+            <span class="kpi-badge positive" id="kpi-profit-factor">PF 1.20</span>
+          </div>
+          <span class="kpi-sub" id="kpi-total-trades">1,322 Total Fills (10R target)</span>
+        </div>
+      </section>
+
+      <!-- Row: Equity Curve & P&L Analysis Graphs -->
+      <section class="dashboard-row grid-2-col">
+        <!-- Equity Curve Chart -->
+        <div class="panel glass-card">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">📈</span>
+              <h2>Portfolio Equity Curve Over Time</h2>
+            </div>
+            <span class="badge-neutral">Historical Backtest (2010 - 2025)</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="equityChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Monthly & Weekly P&L Chart -->
+        <div class="panel glass-card">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">📊</span>
+              <h2>P&amp;L Distribution Over Time</h2>
+            </div>
+            <div class="time-toggle-group">
+              <button class="toggle-btn active" id="btn-toggle-monthly">Monthly</button>
+              <button class="toggle-btn" id="btn-toggle-weekly">Weekly</button>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="pnlChart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Row: Day of Week Pattern Analysis & Trade Log -->
+      <section class="dashboard-row grid-2-col">
+        <!-- Day of Week Analysis -->
+        <div class="panel glass-card">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">📅</span>
+              <h2>Days in a Week P&amp;L Pattern</h2>
+            </div>
+            <span class="badge-neutral">Weekday Alpha Distribution</span>
+          </div>
+          <div class="chart-container" style="height: 250px;">
+            <canvas id="dayOfWeekChart"></canvas>
+          </div>
+          <div class="weekday-stats-grid" id="weekday-stats-grid">
+            <!-- Filled dynamically by JavaScript -->
+          </div>
+        </div>
+
+        <!-- Recent Executed Trades -->
+        <div class="panel glass-card">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-icon">📜</span>
+              <h2>Recent Trade Execution Log</h2>
+            </div>
+            <span class="badge-neutral" id="trade-count-badge">50 Most Recent Trades</span>
+          </div>
+          <div class="table-container">
+            <table class="trades-table">
+              <thead>
+                <tr>
+                  <th>Date / Time</th>
+                  <th>Weekday</th>
+                  <th>Side</th>
+                  <th>Qty</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Reason</th>
+                  <th>P&amp;L ($)</th>
+                  <th>Return</th>
+                </tr>
+              </thead>
+              <tbody id="trades-table-body">
+                <!-- Filled dynamically by JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Configuration Modal -->
+  <div class="modal-backdrop" id="config-modal">
+    <div class="modal-content glass-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⚙️</span>
+          <h3>Strategy &amp; IBKR Configuration</h3>
+        </div>
+        <button class="btn-close" id="btn-close-modal">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="config-form">
+          <div class="form-section-title">Core Strategy Parameters</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="cfg-opening-range">Opening Range Duration</label>
+              <select id="cfg-opening-range" name="opening_range_minutes" class="form-control">
+                <option value="5">5 Minutes (Aggressive)</option>
+                <option value="10">10 Minutes</option>
+                <option value="15" selected>15 Minutes (Recommended / Best DD)</option>
+                <option value="20">20 Minutes</option>
+                <option value="30">30 Minutes</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-capital">Capital to Deploy ($)</label>
+              <input type="number" id="cfg-capital" name="capital" class="form-control" value="5000" min="500" step="100">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-atr-min">OR / ATR Minimum Ratio</label>
+              <input type="number" id="cfg-atr-min" name="or_atr_min" class="form-control" value="0.20" step="0.01" min="0.05" max="1.0">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-atr-max">OR / ATR Maximum Ratio</label>
+              <input type="number" id="cfg-atr-max" name="or_atr_max" class="form-control" value="0.35" step="0.01" min="0.05" max="1.0">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-atr-lookback">ATR Lookback Sessions</label>
+              <input type="number" id="cfg-atr-lookback" name="atr_lookback" class="form-control" value="20" min="5" max="60">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-risk-trade">Risk Per Trade (%)</label>
+              <input type="number" id="cfg-risk-trade" name="risk_per_trade" class="form-control" value="0.006" step="0.001" min="0.001" max="0.05">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-profit-target">Profit Target (R-Multiple)</label>
+              <input type="number" id="cfg-profit-target" name="profit_target_r" class="form-control" value="10.0" step="0.5">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-breakeven">Breakeven Trigger (R)</label>
+              <input type="number" id="cfg-breakeven" name="breakeven_r" class="form-control" value="6.0" step="0.5">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-entry-cutoff">Entry Cutoff Time (ET)</label>
+              <input type="text" id="cfg-entry-cutoff" name="entry_cutoff_time" class="form-control" value="10:30">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-flatten">EOD Flatten Time (ET)</label>
+              <input type="text" id="cfg-flatten" name="flatten_time" class="form-control" value="15:30">
+            </div>
+          </div>
+
+          <div class="form-section-title" style="margin-top: 1.5rem;">Interactive Brokers Connectivity</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="cfg-port">IBKR Socket Port</label>
+              <select id="cfg-port" name="port" class="form-control">
+                <option value="7497" selected>7497 (TWS Paper Trading)</option>
+                <option value="4002">4002 (IB Gateway Paper)</option>
+                <option value="7496">7496 (Live Account)</option>
+              </select>
+            </div>
+
+            <div id="live-port-warning" style="display: none; grid-column: 1 / -1; background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.4); border-radius: var(--radius-sm); padding: 0.65rem 0.9rem; font-size: 0.8rem; color: #fda4af;">
+              ⚠️ <strong>LIVE TRADING MODE (Port 7496):</strong> Real capital will be deployed. Off-Hours test is automatically disabled to protect your live account. Ensure TWS/Gateway is running on port 7496.
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-client-id">API Client ID</label>
+              <input type="number" id="cfg-client-id" name="client_id" class="form-control" value="45">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-poll-seconds">Order Manager Poll Interval (sec)</label>
+              <input type="number" id="cfg-poll-seconds" name="poll_seconds" class="form-control" value="15" min="5" max="60">
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-off-hours">Off-Hours Testing Mode</label>
+              <div class="toggle-checkbox-row">
+                <input type="checkbox" id="cfg-off-hours" name="off_hours_test" checked>
+                <label for="cfg-off-hours" class="checkbox-desc">Relax 09:45 wait &amp; 10:30 cutoffs (Paper Trading Only)</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="btn-cancel-modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save &amp; Apply</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

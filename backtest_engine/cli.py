@@ -181,6 +181,18 @@ def main() -> None:
     live_parser.add_argument("--poll-seconds", type=int, default=60)
     live_parser.add_argument("--signal-buffer-seconds", type=int, default=5)
     live_parser.add_argument("--no-manage", action="store_true")
+    live_parser.add_argument("--off-hours-test", action="store_true", help="Relax timing rules to allow off-hours testing (paper trading only).")
+    dash_parser = sub.add_parser("dashboard", help="Start the interactive web dashboard.")
+    dash_parser.add_argument("--host", default="0.0.0.0", help="Host to bind server to (default 0.0.0.0)")
+    dash_parser.add_argument("--port", type=int, default=8060, help="Port to listen on (default 8060)")
+    bf_parser = sub.add_parser("backfill-intraday", help="Backfill 1-minute historical bars from IBKR or Yahoo Finance.")
+    bf_parser.add_argument("--symbol", default="TQQQ", help="Symbol to backfill (default TQQQ)")
+    bf_parser.add_argument("--source", choices=["ibkr", "yfinance"], default="ibkr", help="Data source: ibkr (free via TWS) or yfinance (free trailing 30d)")
+    bf_parser.add_argument("--start", default="2025-06-03", help="Start date (YYYY-MM-DD)")
+    bf_parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD)")
+    bf_parser.add_argument("--host", default="127.0.0.1", help="IBKR host (default 127.0.0.1)")
+    bf_parser.add_argument("--port", type=int, default=7497, help="IBKR socket port (default 7497)")
+    bf_parser.add_argument("--client-id", type=int, default=49, help="IBKR client ID")
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch(args.config)
@@ -192,6 +204,24 @@ def main() -> None:
         run_intraday_orb(args.config)
     elif args.cmd == "orb-signal":
         orb_signal(args.config, args.session_date, args.capital)
+    elif args.cmd == "dashboard":
+        from dashboard.server import run_dashboard
+
+        run_dashboard(host=args.host, port=args.port)
+    elif args.cmd == "backfill-intraday":
+        from backtest_engine.intraday_backfill import backfill_from_ibkr, backfill_from_yfinance_trailing30
+
+        if args.source == "ibkr":
+            backfill_from_ibkr(
+                symbol=args.symbol,
+                start_date=args.start,
+                end_date=args.end,
+                host=args.host,
+                port=args.port,
+                client_id=args.client_id,
+            )
+        else:
+            backfill_from_yfinance_trailing30(symbol=args.symbol)
     elif args.cmd == "live-orb-ibkr":
         from backtest_engine.live_ibkr_orb import IbkrOrbSettings, run_live_ibkr_orb
 
@@ -209,6 +239,7 @@ def main() -> None:
                 poll_seconds=args.poll_seconds,
                 signal_buffer_seconds=args.signal_buffer_seconds,
                 manage_orders=not args.no_manage,
+                off_hours_test=args.off_hours_test,
             )
         )
 

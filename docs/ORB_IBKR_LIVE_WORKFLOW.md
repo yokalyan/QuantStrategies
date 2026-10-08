@@ -39,10 +39,10 @@ python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.y
 python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000 --transmit
 ```
 
-The confirmation prompt requires an exact string like:
+The confirmation prompt requires typing:
 
 ```text
-YES TQQQ 113
+yes
 ```
 
 ## Live Account Submission
@@ -75,10 +75,30 @@ python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.y
 
 The process must stay running all day for these management steps to happen.
 
+## Off-Hours Paper Testing
+
+To test the entire IBKR connection, signal computation, order construction, and order manager outside regular market hours (e.g. evenings or weekends), use `--off-hours-test`:
+
+```bash
+python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000 --off-hours-test
+```
+
+With paper transmission:
+
+```bash
+python -m backtest_engine.cli live-orb-ibkr configs/midpoint_stop_orb_intraday.yaml --capital 5000 --off-hours-test --transmit
+```
+
+### Safety Protections for `--off-hours-test`:
+- **Paper Trading Only**: The script strictly checks that the port is paper trading (`7497` or `4002`) or the account is a paper account (`DU...` or `DF...`). If run against a live port (`7496`), it raises a hard safety exception and halts immediately.
+- **Relaxed Timing**: Bypasses the 09:45 morning wait, uses the most recent completed regular-session 1-minute bars to calculate the opening range, permits bracket order generation outside the 09:45–10:30 window, and bypasses wall-clock 10:30 expiration and 15:30 flattening so you can observe the manager in action.
+
 ## Safety Defaults
 
 - Paper port `7497` is the default.
 - Orders are not sent unless `--transmit` is present.
 - Confirmation is required unless `--no-confirm` is explicitly supplied.
 - Order management is enabled unless `--no-manage` is explicitly supplied.
+- Off-hours testing `--off-hours-test` is strictly blocked on live accounts.
 - TWS/IB Gateway order state should always be checked manually after submission.
+

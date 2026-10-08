@@ -5,3 +5,5 @@ __pycache__/
 *.egg-info/
 data/cache/*.parquet
 data/intraday/*.parquet
+data/intraday/*.csv
+data/cache/*.csv

@@ -47,6 +47,9 @@ class OrbRecommendation:
     profit_target_r: float
     breakeven_r: float
     risk_per_share: float
+    atr_lookback: int = 20
+    entry_cutoff_time: str = "10:30"
+    flatten_time: str = "15:30"
 
     @property
     def can_trade(self) -> bool:
@@ -126,7 +129,12 @@ def run_intraday_orb(config_path: Path) -> Path:
     frame["date"] = frame["datetime"].dt.normalize()
     regular_frame = frame[(frame["datetime"].dt.time >= pd.Timestamp("09:30").time()) & (frame["datetime"].dt.time <= pd.Timestamp("15:59").time())]
     daily = regular_frame.groupby("date").agg(open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"))
-    atr20_by_date = _daily_atr20(daily)
+    atr_lookback = int(params.get("atr_lookback", 20))
+    entry_cutoff_str = str(params.get("entry_cutoff_time", "10:30"))
+    flatten_str = str(params.get("flatten_time", "15:30"))
+    entry_cutoff_time = pd.Timestamp(entry_cutoff_str).time()
+    flatten_time = pd.Timestamp(flatten_str).time()
+    atr_by_date = _daily_atr(daily, atr_lookback)
     cash = float(config["starting_capital"])
     qty = 0
     entry_price: float | None = None
@@ -156,14 +164,14 @@ def run_intraday_orb(config_path: Path) -> Path:
         or_mid = (or_high + or_low) / 2.0
         or_dir = 1 if float(first.iloc[-1]["close"]) >= float(first.iloc[0]["open"]) else -1
         current_range = or_high - or_low
-        if len(opening_ranges) >= 20:
-            avg_range = sum(opening_ranges[-20:]) / min(20, len(opening_ranges))
+        if len(opening_ranges) >= atr_lookback:
+            avg_range = sum(opening_ranges[-atr_lookback:]) / min(atr_lookback, len(opening_ranges))
             range_valid = current_range <= 2.0 * avg_range
         else:
             range_valid = True
-        atr20 = atr20_by_date.get(session)
+        atr_val = atr_by_date.get(session)
         if ratio_min is not None and ratio_max is not None:
-            ratio = current_range / atr20 if pd.notna(atr20) and atr20 > 0 else float("nan")
+            ratio = current_range / atr_val if pd.notna(atr_val) and atr_val > 0 else float("nan")
             atr_range_valid = ratio_min < ratio <= ratio_max
         else:
             atr_range_valid = True
@@ -184,7 +192,7 @@ def run_intraday_orb(config_path: Path) -> Path:
                         stop_price = entry_price
                         be_triggered = True
                 should_exit = (long and (price <= stop_price or price >= target_price)) or ((not long) and (price >= stop_price or price <= target_price))
-                if ts.time() >= pd.Timestamp("15:30").time():
+                if ts.time() >= flatten_time:
                     should_exit = True
                 if should_exit:
                     cash += qty * price
@@ -195,7 +203,7 @@ def run_intraday_orb(config_path: Path) -> Path:
                     be_triggered = False
                     continue
             earliest_entry_time = (pd.Timestamp("09:30") + pd.Timedelta(minutes=opening_range_minutes)).time()
-            if qty == 0 and (not traded_today) and range_valid and atr_range_valid and earliest_entry_time <= ts.time() < pd.Timestamp("10:30").time():
+            if qty == 0 and (not traded_today) and range_valid and atr_range_valid and earliest_entry_time <= ts.time() < entry_cutoff_time:
                 direction = 0
                 if or_dir > 0 and price > or_high:
                     direction = 1
@@ -277,9 +285,13 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     if len(day) < opening_range_minutes:
         raise RuntimeError(f"Need at least {opening_range_minutes} regular-session minute bars for {target_date.date()}; found {len(day)}")
 
+    atr_lookback = int(params.get("atr_lookback", 20))
+    entry_cutoff_time = str(params.get("entry_cutoff_time", "10:30"))
+    flatten_time = str(params.get("flatten_time", "15:30"))
+
     daily = regular.groupby("date").agg(open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"))
-    atr20 = _atr20_before_session(daily, target_date)
-    previous_opening_ranges = _previous_opening_ranges(regular, target_date, 20, opening_range_minutes)
+    atr = _atr_before_session(daily, target_date, atr_lookback)
+    previous_opening_ranges = _previous_opening_ranges(regular, target_date, atr_lookback, opening_range_minutes)
     first = day.iloc[:opening_range_minutes]
     or_high = float(first["high"].max())
     or_low = float(first["low"].min())
@@ -288,7 +300,7 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     or_close = float(first.iloc[-1]["close"])
     or_range = or_high - or_low
     direction = 1 if or_close >= or_open else -1
-    ratio = or_range / atr20 if atr20 and atr20 > 0 else float("nan")
+    ratio = or_range / atr if atr and atr > 0 else float("nan")
     avg_opening_range = sum(previous_opening_ranges) / len(previous_opening_ranges) if previous_opening_ranges else float("nan")
     max_range_valid = True if not previous_opening_ranges else or_range <= 2.0 * avg_opening_range
     ratio_min = float(params.get("or_atr_min", 0.15))
@@ -319,7 +331,7 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
         or_low=or_low,
         or_mid=or_mid,
         or_range=or_range,
-        atr20=atr20,
+        atr20=atr,
         ratio=ratio,
         ratio_min=ratio_min,
         ratio_max=ratio_max,
@@ -337,6 +349,9 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
         profit_target_r=profit_target_r,
         breakeven_r=breakeven_r,
         risk_per_share=risk_per_share,
+        atr_lookback=atr_lookback,
+        entry_cutoff_time=entry_cutoff_time,
+        flatten_time=flatten_time,
     )
 
 
@@ -345,27 +360,27 @@ def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
     print(f"Opening candle: {recommendation.direction_name} ({recommendation.or_open:.2f} -> {recommendation.or_close:.2f})")
     print(f"Opening range high/low/mid: {recommendation.or_high:.2f} / {recommendation.or_low:.2f} / {recommendation.or_mid:.2f}")
     print(f"Opening range: {recommendation.or_range:.4f}")
-    print(f"ATR20 before session: {recommendation.atr20:.4f}")
-    print(f"OR/ATR20: {recommendation.ratio:.4f} (required {recommendation.ratio_min:.2f} < ratio <= {recommendation.ratio_max:.2f})")
+    print(f"ATR{recommendation.atr_lookback} before session: {recommendation.atr20:.4f}")
+    print(f"OR/ATR{recommendation.atr_lookback}: {recommendation.ratio:.4f} (required {recommendation.ratio_min:.2f} < ratio <= {recommendation.ratio_max:.2f})")
     if pd.notna(recommendation.avg_opening_range):
-        print(f"20-session avg opening range: {recommendation.avg_opening_range:.4f}; 2x guard valid: {recommendation.max_range_valid}")
+        print(f"{recommendation.atr_lookback}-session avg opening range: {recommendation.avg_opening_range:.4f}; 2x guard valid: {recommendation.max_range_valid}")
     print(f"Capital basis: ${recommendation.capital:,.2f}; risk budget: ${recommendation.risk_amount:,.2f}; max notional: ${recommendation.max_notional:,.2f}")
     print("")
     if not recommendation.can_trade:
         print("Recommendation: NO TRADE")
         if not recommendation.max_range_valid:
-            print("- Opening range failed the 2x historical opening-range guardrail.")
+            print(f"- Opening range failed the 2x historical {recommendation.atr_lookback}-session opening-range guardrail.")
         if not recommendation.ratio_valid:
-            print(f"- Opening range / ATR20 is outside the tested {recommendation.ratio_min:.2f}-{recommendation.ratio_max:.2f} band.")
+            print(f"- Opening range / ATR{recommendation.atr_lookback} is outside the tested {recommendation.ratio_min:.2f}-{recommendation.ratio_max:.2f} band.")
         if recommendation.shares <= 0:
             print("- Position size computed to zero shares.")
         return
     print("Recommendation: PREPARE CONTINGENT OR BRACKET ORDER")
-    print(f"1. Entry: {recommendation.order_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.entry:.2f}, valid until 10:30 ET.")
+    print(f"1. Entry: {recommendation.order_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.entry:.2f}, valid until {recommendation.entry_cutoff_time} ET.")
     print(f"2. Initial stop: {recommendation.exit_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.stop:.2f}.")
     print(f"3. Profit target: {recommendation.exit_side} {recommendation.shares} {recommendation.symbol} @ {recommendation.target:.2f} ({recommendation.profit_target_r:.1f}R).")
     print(f"4. Breakeven trigger: if price reaches {recommendation.breakeven_trigger:.2f} ({recommendation.breakeven_r:.1f}R), move stop to entry {recommendation.entry:.2f}.")
-    print("5. Flatten any open position at 15:30 ET.")
+    print(f"5. Flatten any open position at {recommendation.flatten_time} ET.")
     print(f"Estimated risk/share: ${recommendation.risk_per_share:.2f}; estimated total risk: ${recommendation.risk_per_share * recommendation.shares:,.2f}; notional: ${recommendation.entry * recommendation.shares:,.2f}.")
 
 
@@ -384,15 +399,23 @@ def _load_intraday_frame(source: dict[str, Any], symbol: str) -> pd.DataFrame:
     return pd.read_parquet(Path(source["cache_dir"]) / f"{symbol}_{source.get('interval', '1m')}.parquet")
 
 
-def _atr20_before_session(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:
+def _atr_before_session(daily: pd.DataFrame, session_date: pd.Timestamp, lookback: int = 20) -> float:
     previous = daily[daily.index < session_date].copy()
-    if len(previous) < 20:
+    if len(previous) < lookback:
         return float("nan")
-    return float(_true_range(previous).iloc[-20:].mean())
+    return float(_true_range(previous).iloc[-lookback:].mean())
+
+
+def _atr20_before_session(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:
+    return _atr_before_session(daily, session_date, 20)
+
+
+def _daily_atr(daily: pd.DataFrame, lookback: int = 20) -> pd.Series:
+    return _true_range(daily).rolling(lookback).mean().shift(1)
 
 
 def _daily_atr20(daily: pd.DataFrame) -> pd.Series:
-    return _true_range(daily).rolling(20).mean().shift(1)
+    return _daily_atr(daily, 20)
 
 
 def _true_range(daily: pd.DataFrame) -> pd.Series:
