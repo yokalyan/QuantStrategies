@@ -36,7 +36,15 @@ class StrategyRunner:
         self.stop_requested = False
         self.thread: threading.Thread | None = None
         self.ib: Any = None
-        self.state: dict[str, Any] = {
+        self.contract: Any = None
+        self.trades: list[Any] = []
+        self.account: str | None = None
+        self.state: dict[str, Any] = self._default_state()
+        self.logs: list[dict[str, str]] = []
+        self.callbacks: list[Callable[[dict[str, Any]], None]] = []
+
+    def _default_state(self) -> dict[str, Any]:
+        return {
             "status": "STOPPED",  # STOPPED, CONNECTING, POLLING, READY, IN_TRADE, FLATTENED, ERROR
             "symbol": "TQQQ",
             "ibkr_connected": False,
@@ -44,29 +52,27 @@ class StrategyRunner:
             "recommendation": None,
             "orders": [],
             "position": {"shares": 0, "avg_cost": 0.0, "unrealized_pnl": 0.0},
+            "mode": "DRY_RUN",
+            "next_action": "Review settings, connect to IBKR, then run a dry check.",
+            "schedule": {},
             "error": None,
             "last_updated": None,
         }
-        self.logs: list[dict[str, str]] = []
-        self.callbacks: list[Callable[[dict[str, Any]], None]] = []
 
-    def reset(self) -> None:
-        if self.is_running:
-            self.stop()
-        self.state = {
-            "status": "STOPPED",
-            "symbol": "TQQQ",
-            "ibkr_connected": False,
-            "last_price": None,
-            "recommendation": None,
-            "orders": [],
-            "position": {"shares": 0, "avg_cost": 0.0, "unrealized_pnl": 0.0},
-            "error": None,
-            "last_updated": None,
-        }
+    def reset(self) -> bool:
+        if self.is_running and self.thread and self.thread.is_alive():
+            self.log("WARN", "Reset refused while the strategy worker is active. Stop or kill first.")
+            self.state["next_action"] = "Stop or kill the active worker before resetting the session."
+            self._notify({"type": "state", "data": self.state})
+            return False
+        self.state = self._default_state()
+        self.trades = []
+        self.contract = None
+        self.account = None
         self.logs = []
         self._notify({"type": "state", "data": self.state})
         self._notify({"type": "clear_logs", "data": {}})
+        return True
 
     def register_callback(self, cb: Callable[[dict[str, Any]], None]) -> None:
         if cb not in self.callbacks:
@@ -109,6 +115,8 @@ class StrategyRunner:
         self.is_running = True
         self.state["status"] = "STARTING"
         self.state["error"] = None
+        self.state["mode"] = "TRANSMIT" if bool((overrides or {}).get("transmit", False)) else "DRY_RUN"
+        self.state["next_action"] = "Connecting to IBKR."
         self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
         self._notify({"type": "state", "data": self.state})
 
@@ -121,19 +129,77 @@ class StrategyRunner:
         return True
 
     def stop(self) -> bool:
+        if not (self.is_running and self.thread and self.thread.is_alive()):
+            self.stop_requested = False
+            self.state["status"] = "STOPPED"
+            self.state["next_action"] = "Strategy is already stopped."
+            self._notify({"type": "state", "data": self.state})
+            return False
         self.stop_requested = True
-        self.is_running = False
-        self.state["status"] = "STOPPED"
-        self.state["ibkr_connected"] = False
+        self.state["status"] = "STOPPING"
+        self.state["next_action"] = "Graceful stop requested. The worker will exit at the next safe checkpoint."
+        self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
+        self.log("WARN", "Graceful stop requested by user.")
+        self._notify({"type": "state", "data": self.state})
+        return True
+
+    def kill(self) -> bool:
+        self.stop_requested = True
         if self.ib:
             try:
                 if self.ib.isConnected():
                     self.ib.disconnect()
             except Exception:
                 pass
-        self.log("WARN", "Strategy stopped by user.")
+        self.is_running = False
+        self.state["status"] = "KILLED"
+        self.state["ibkr_connected"] = False
+        self.state["next_action"] = "Connection forcibly closed. Verify IBKR manually before restarting."
+        self.state["last_updated"] = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
+        self.log("ERROR", "Emergency kill executed. IBKR connection closed.")
         self._notify({"type": "state", "data": self.state})
         return True
+
+    def restart(self, overrides: dict[str, Any] | None = None) -> bool:
+        if self.is_running and self.thread and self.thread.is_alive():
+            self.kill()
+            self.thread.join(timeout=5)
+        self.is_running = False
+        self.stop_requested = False
+        self.state = self._default_state()
+        self.trades = []
+        self.contract = None
+        self.account = None
+        self.logs = []
+        self.log("INFO", "Restarting strategy worker with current dashboard settings.")
+        return self.start(overrides or {})
+
+    def flatten_now(self) -> bool:
+        if not self.ib or not self.contract:
+            self.log("WARN", "Flatten requested, but no active IBKR contract is attached.")
+            return False
+        try:
+            from ib_insync import MarketOrder
+
+            _flatten_position(self.ib, self.contract, self._recommendation_obj(), self.account, MarketOrder)
+            self.state["status"] = "FLATTEN_REQUESTED"
+            self.state["next_action"] = "Flatten order submitted. Verify final position in IBKR."
+            self.log("WARN", "Manual flatten requested from dashboard.")
+            self._notify({"type": "state", "data": self.state})
+            return True
+        except Exception as exc:
+            self.state["error"] = str(exc)
+            self.log("ERROR", f"Manual flatten failed: {exc}")
+            self._notify({"type": "state", "data": self.state})
+            return False
+
+    def _recommendation_obj(self) -> OrbRecommendation:
+        rec = self.state.get("recommendation") or {}
+        if not rec:
+            raise RuntimeError("No recommendation is available for flatten context.")
+        data = {k: v for k, v in rec.items() if k in OrbRecommendation.__dataclass_fields__}
+        data["session_date"] = pd.Timestamp(data["session_date"])
+        return OrbRecommendation(**data)
 
     def _run_loop(self, overrides: dict[str, Any]) -> None:
         loop = asyncio.new_event_loop()
@@ -176,12 +242,14 @@ class StrategyRunner:
             opening_range_minutes = int(params.get("opening_range_minutes", 15))
             entry_cutoff = _parse_time_str(str(params.get("entry_cutoff_time", "10:30")), dtime(10, 30))
             flatten_time = _parse_time_str(str(params.get("flatten_time", "15:30")), dtime(15, 30))
-            poll_seconds = int(overrides.get("poll_seconds", 15))
+            poll_seconds = int(overrides.get("poll_seconds", 60))
             host = overrides.get("host", "127.0.0.1")
             port = int(overrides.get("port", 7497))
             client_id = int(overrides.get("client_id", 45))
             off_hours_test = bool(overrides.get("off_hours_test", False))
             account = overrides.get("account") or None
+            transmit = bool(overrides.get("transmit", False))
+            self.account = account
 
             # Safety check
             if off_hours_test:
@@ -192,6 +260,15 @@ class StrategyRunner:
 
             self.state["status"] = "CONNECTING"
             self.state["ibkr_connected"] = False
+            self.state["mode"] = "TRANSMIT" if transmit else "DRY_RUN"
+            self.state["next_action"] = "Connecting to IBKR socket."
+            self.state["schedule"] = {
+                "opening_range": f"09:30 + {opening_range_minutes}m",
+                "entry_cutoff": entry_cutoff.strftime("%H:%M"),
+                "flatten": flatten_time.strftime("%H:%M"),
+                "poll_seconds": poll_seconds,
+                "off_hours_test": off_hours_test,
+            }
             self.log("INFO", f"Connecting to IBKR at {host}:{port} clientId={client_id}...")
             self._notify({"type": "state", "data": self.state})
 
@@ -239,8 +316,10 @@ class StrategyRunner:
 
             contract = Stock(symbol, "SMART", "USD")
             ib.qualifyContracts(contract)
+            self.contract = contract
 
             self.state["status"] = "POLLING"
+            self.state["next_action"] = "Waiting for enough minute bars to compute the signal."
             self.log("INFO", f"Connected to IBKR! Qualified {symbol} contract. Polling minute bars (OR={opening_range_minutes}m)...")
             self._notify({"type": "state", "data": self.state})
 
@@ -259,6 +338,7 @@ class StrategyRunner:
 
             if not rec.can_trade:
                 self.state["status"] = "STAND_DOWN"
+                self.state["next_action"] = "No trade today. Review signal diagnostics and stand down."
                 self.log("WARN", "Strategy decision: STAND DOWN (no trade today based on filters).")
                 self._notify({"type": "state", "data": self.state})
                 return
@@ -275,13 +355,22 @@ class StrategyRunner:
                 {"action": stop.action, "type": stop.orderType, "qty": stop.totalQuantity, "price": rec.stop, "role": "Stop Loss STP", "status": "Submitting"},
             ]
             self.state["orders"] = order_list_repr
+            if not transmit:
+                self.state["status"] = "READY_DRY_RUN"
+                self.state["next_action"] = "Dry run complete. Review the bracket. Enable transmit when ready to place orders."
+                self.log("INFO", "Dry-run mode: bracket prepared but not submitted to IBKR.")
+                self._notify({"type": "state", "data": self.state})
+                return
+
             self.state["status"] = "BRACKET_SUBMITTED"
+            self.state["next_action"] = "Bracket submitted. Monitoring entry until cutoff."
             self._notify({"type": "state", "data": self.state})
 
             trades = []
             for order in orders:
                 trades.append(ib.placeOrder(contract, order))
                 ib.sleep(0.25)
+            self.trades = trades
 
             parent_trade, target_trade, stop_trade = trades
             self.log("SUCCESS", "Bracket order placed in IBKR. Active trade manager engaged.")
@@ -317,6 +406,7 @@ class StrategyRunner:
                 # Pending entry check
                 if not _is_filled(parent_trade):
                     self.state["status"] = "PENDING_ENTRY"
+                    self.state["next_action"] = f"Entry pending. Will cancel at {entry_cutoff.strftime('%H:%M')} ET if unfilled."
                     if (not off_hours_test) and now.time() >= entry_cutoff:
                         self.log("WARN", f"Entry window cutoff ({entry_cutoff.strftime('%H:%M')} ET) reached. Cancelling bracket.")
                         _cancel_trade_if_active(ib, parent_trade)
@@ -324,6 +414,7 @@ class StrategyRunner:
                         _cancel_trade_if_active(ib, stop_trade)
                         entry_cancelled = True
                         self.state["status"] = "CANCELLED"
+                        self.state["next_action"] = "Entry window expired. Bracket cancelled."
                         break
                     self._notify({"type": "state", "data": self.state})
                     ib.sleep(poll_seconds)
@@ -331,6 +422,7 @@ class StrategyRunner:
 
                 # Trade is active
                 self.state["status"] = "IN_TRADE"
+                self.state["next_action"] = "Position is active. Monitoring 6R breakeven trigger and flatten time."
                 fill_price = float(parent_trade.orderStatus.avgFillPrice or rec.entry)
                 current_pnl = 0.0
                 if self.state["last_price"]:
@@ -347,10 +439,12 @@ class StrategyRunner:
                 if _is_filled(target_trade):
                     self.log("SUCCESS", f"TARGET HIT! Take profit limit order filled at {target_trade.orderStatus.avgFillPrice:.2f} (+10R).")
                     self.state["status"] = "EXIT_PROFIT"
+                    self.state["next_action"] = "Target filled. Verify position is flat in IBKR."
                     break
                 if _is_filled(stop_trade):
                     self.log("WARN", f"STOP HIT! Stop loss order filled at {stop_trade.orderStatus.avgFillPrice:.2f}.")
                     self.state["status"] = "EXIT_STOP"
+                    self.state["next_action"] = "Stop filled. Verify position is flat in IBKR."
                     break
 
                 # 6R Breakeven Trigger
@@ -359,7 +453,9 @@ class StrategyRunner:
                     self.log("SUCCESS", f"+6R Reached! Moving stop loss to breakeven ({breakeven_price:.2f}).")
                     replacement = _replace_stop_order(ib, contract, rec, stop_trade, account, Order, breakeven_price)
                     stop_trade = replacement
+                    self.trades = [parent_trade, target_trade, stop_trade]
                     stop_moved = True
+                    self.state["next_action"] = "Breakeven stop is active. Continue monitoring target/stop/flatten."
 
                 # 15:30 EOD Flatten
                 if (not off_hours_test) and now.time() >= flatten_time and not flattened:
@@ -369,6 +465,7 @@ class StrategyRunner:
                     _flatten_position(ib, contract, rec, account, MarketOrder)
                     flattened = True
                     self.state["status"] = "FLATTENED"
+                    self.state["next_action"] = "Flatten submitted. Verify final position in IBKR."
                     break
 
                 self._notify({"type": "state", "data": self.state})
@@ -377,6 +474,7 @@ class StrategyRunner:
         except Exception as exc:
             self.state["status"] = "ERROR"
             self.state["error"] = str(exc)
+            self.state["next_action"] = "Resolve the error, verify IBKR state, then restart if safe."
             self.log("ERROR", f"Strategy error: {exc}")
         finally:
             if ib and ib.isConnected():
@@ -386,8 +484,12 @@ class StrategyRunner:
                     pass
             self.state["ibkr_connected"] = False
             self.is_running = False
-            if self.state["status"] not in {"ERROR", "STAND_DOWN", "FLATTENED"}:
+            if self.state["status"] not in {"ERROR", "STAND_DOWN", "FLATTENED", "READY_DRY_RUN", "KILLED", "EXIT_PROFIT", "EXIT_STOP", "CANCELLED"}:
                 self.state["status"] = "STOPPED"
+                self.state["next_action"] = "Execution cycle stopped."
+            self.trades = []
+            self.contract = None
+            self.account = None
             self.log("INFO", "Strategy execution cycle finished.")
             self._notify({"type": "state", "data": self.state})
 

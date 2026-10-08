@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20261007-dashboard">
 </head>
 <body class="dark-theme">
   <!-- Top Navigation Bar -->
@@ -50,10 +50,6 @@
       <button class="btn btn-primary" id="btn-config-toggle">
         <span class="icon">⚙️</span> Settings
       </button>
-      <button class="btn btn-action" id="btn-toggle-strategy">
-        <span class="pulse-indicator"></span>
-        <span id="btn-strategy-text">START STRATEGY</span>
-      </button>
     </div>
   </header>
 
@@ -81,6 +77,65 @@
         <span class="section-sub">Real-Time TQQQ Market Feeds • IBKR Order Routing • Dynamic 15m Midpoint Stop Loss</span>
       </div>
 
+      <section class="operator-strip glass-card">
+        <div class="operator-main">
+          <div class="run-state-card">
+            <span class="run-state-label">Session State</span>
+            <div class="run-state-row">
+              <span class="state-dot" id="state-dot"></span>
+              <span class="run-state-value" id="run-state-value">STOPPED</span>
+            </div>
+            <span class="run-state-sub" id="run-next-action">Review settings, connect to IBKR, then run a dry check.</span>
+          </div>
+
+          <div class="session-timeline" id="session-timeline">
+            <div class="timeline-step" data-step="preflight">
+              <span class="step-kicker">1</span>
+              <span class="step-title">Preflight</span>
+              <span class="step-sub">IBKR + settings</span>
+            </div>
+            <div class="timeline-step" data-step="signal">
+              <span class="step-kicker">2</span>
+              <span class="step-title">Signal</span>
+              <span class="step-sub">09:45 ET</span>
+            </div>
+            <div class="timeline-step" data-step="entry">
+              <span class="step-kicker">3</span>
+              <span class="step-title">Entry</span>
+              <span class="step-sub">until 10:30</span>
+            </div>
+            <div class="timeline-step" data-step="manage">
+              <span class="step-kicker">4</span>
+              <span class="step-title">Manage</span>
+              <span class="step-sub">6R stop move</span>
+            </div>
+            <div class="timeline-step" data-step="flatten">
+              <span class="step-kicker">5</span>
+              <span class="step-title">Flatten</span>
+              <span class="step-sub">15:30 ET</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="operator-actions">
+          <label class="mode-switch" title="Dry run computes the signal and bracket without placing orders.">
+            <input type="checkbox" id="cfg-transmit">
+            <span class="switch-track"></span>
+            <span class="switch-text">
+              <strong id="transmit-mode-label">Dry run</strong>
+              <small id="transmit-mode-sub">No IBKR orders</small>
+            </span>
+          </label>
+          <button class="btn btn-action" id="btn-toggle-strategy">
+            <span class="pulse-indicator"></span>
+            <span id="btn-strategy-text">RUN DRY CHECK</span>
+          </button>
+          <button class="btn btn-secondary" id="btn-restart-strategy" title="Stop, clear session state, and start again with the current settings.">Restart</button>
+          <button class="btn btn-warning" id="btn-flatten-now" title="Cancel exits and submit a market flatten order for the current IBKR position.">Flatten Now</button>
+          <button class="btn btn-danger" id="btn-kill-strategy" title="Emergency disconnect from IBKR and stop the dashboard worker.">Kill</button>
+        </div>
+      </section>
+
       <section class="dashboard-row grid-2-col">
         <!-- Live Strategy & Signals Card -->
         <div class="panel glass-card">
@@ -97,19 +152,19 @@
             <div class="hud-metrics-row">
               <div class="metric-box">
                 <span class="metric-label">Opening Range (15m)</span>
-                <span class="metric-val mono" id="hud-or-range">$1.0000</span>
-                <span class="metric-sub" id="hud-or-bounds">Low: 81.63 | High: 82.63</span>
+                <span class="metric-val mono" id="hud-or-range">--</span>
+                <span class="metric-sub" id="hud-or-bounds">Waiting for completed opening range</span>
               </div>
 
               <div class="metric-box">
                 <span class="metric-label">Trailing ATR</span>
-                <span class="metric-val mono" id="hud-atr">2.8925</span>
+                <span class="metric-val mono" id="hud-atr">--</span>
                 <span class="metric-sub" id="hud-atr-lookback">Lookback: 20 Days</span>
               </div>
 
               <div class="metric-box">
                 <span class="metric-label">Midpoint Stop</span>
-                <span class="metric-val mono highlight" id="hud-or-mid">$82.13</span>
+                <span class="metric-val mono highlight" id="hud-or-mid">--</span>
                 <span class="metric-sub">50% Retracement Cut</span>
               </div>
             </div>
@@ -147,7 +202,7 @@
               <!-- Dynamic Boundaries Row -->
               <div class="gauge-labels">
                 <span class="gauge-boundary-label">0.05 (Min Scale)</span>
-                <span class="gauge-band-badge" id="gauge-band-text">Target Band: 0.15 — 0.25</span>
+                <span class="gauge-band-badge" id="gauge-band-text">Target Band: 0.20 — 0.35</span>
                 <span class="gauge-boundary-label">0.45 (Max Scale)</span>
               </div>
 
@@ -183,8 +238,8 @@
                     <span class="ord-badge">STEP 1 • ENTRY</span>
                     <span class="ord-role">Breakout</span>
                   </div>
-                  <span class="ord-side" id="bracket-entry-side">SELL SHORT STOP</span>
-                  <span class="ord-price mono" id="bracket-entry-price">$81.63</span>
+                  <span class="ord-side" id="bracket-entry-side">Pending signal</span>
+                  <span class="ord-price mono" id="bracket-entry-price">--</span>
                   <span class="ord-note" id="bracket-entry-note">Valid until 10:30 ET</span>
                 </div>
 
@@ -194,7 +249,7 @@
                     <span class="ord-role danger">1.0R Initial</span>
                   </div>
                   <span class="ord-side">MIDPOINT STOP</span>
-                  <span class="ord-price mono danger" id="bracket-stop-price">$82.13</span>
+                  <span class="ord-price mono danger" id="bracket-stop-price">--</span>
                   <span class="ord-note">50% Retracement Cut</span>
                 </div>
 
@@ -204,7 +259,7 @@
                     <span class="ord-role positive">Take Profit</span>
                   </div>
                   <span class="ord-side">10.0R LIMIT</span>
-                  <span class="ord-price mono positive" id="bracket-target-price">$76.63</span>
+                  <span class="ord-price mono positive" id="bracket-target-price">--</span>
                   <span class="ord-note">Full Runner Target</span>
                 </div>
 
@@ -214,7 +269,7 @@
                     <span class="ord-role highlight">+6.0R Trigger</span>
                   </div>
                   <span class="ord-side">BREAKEVEN STOP</span>
-                  <span class="ord-price mono highlight" id="bracket-be-price">$78.63</span>
+                  <span class="ord-price mono highlight" id="bracket-be-price">--</span>
                   <span class="ord-note">Move stop to entry price</span>
                 </div>
               </div>
@@ -411,7 +466,7 @@
   </main>
 
   <!-- Configuration Modal -->
-  <div class="modal-backdrop" id="config-modal">
+  <div class="modal-backdrop" id="config-modal" hidden>
     <div class="modal-content glass-card">
       <div class="modal-header">
         <div class="modal-title-group">
@@ -485,6 +540,11 @@
           <div class="form-section-title" style="margin-top: 1.5rem;">Interactive Brokers Connectivity</div>
           <div class="form-grid">
             <div class="form-group">
+              <label for="cfg-host">IBKR Host</label>
+              <input type="text" id="cfg-host" name="host" class="form-control" value="127.0.0.1">
+            </div>
+
+            <div class="form-group">
               <label for="cfg-port">IBKR Socket Port</label>
               <select id="cfg-port" name="port" class="form-control">
                 <option value="7497" selected>7497 (TWS Paper Trading)</option>
@@ -503,8 +563,13 @@
             </div>
 
             <div class="form-group">
+              <label for="cfg-account">Account ID (optional)</label>
+              <input type="text" id="cfg-account" name="account" class="form-control" placeholder="DU1234567 for paper">
+            </div>
+
+            <div class="form-group">
               <label for="cfg-poll-seconds">Order Manager Poll Interval (sec)</label>
-              <input type="number" id="cfg-poll-seconds" name="poll_seconds" class="form-control" value="15" min="5" max="60">
+              <input type="number" id="cfg-poll-seconds" name="poll_seconds" class="form-control" value="60" min="5" max="120">
             </div>
 
             <div class="form-group">
@@ -525,6 +590,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261007-dashboard"></script>
 </body>
 </html>
