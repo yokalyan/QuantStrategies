@@ -13,6 +13,7 @@ strategy:
     max_leverage: 4.0
     entry_buffer: 0.0
     direction_mode: opening_range
+    intraday_filter_mode: none
 symbol: TQQQ
 start: '2021-01-01'
 end: '2026-06-01'

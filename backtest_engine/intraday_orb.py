@@ -55,10 +55,14 @@ class OrbRecommendation:
     opening_range_direction: int = 0
     direction_mode: str = "opening_range"
     direction_agreement_valid: bool = True
+    intraday_filter_mode: str = "none"
+    intraday_filter_valid: bool = True
+    entry_vwap: float = float("nan")
+    entry_twap: float = float("nan")
 
     @property
     def can_trade(self) -> bool:
-        return bool(self.direction != 0 and self.direction_agreement_valid and self.max_range_valid and self.ratio_valid and self.shares > 0)
+        return bool(self.direction != 0 and self.direction_agreement_valid and self.intraday_filter_valid and self.max_range_valid and self.ratio_valid and self.shares > 0)
 
     @property
     def order_side(self) -> str:
@@ -164,10 +168,14 @@ def run_intraday_orb(config_path: Path) -> Path:
     ratio_min = float(ratio_min) if ratio_min is not None else None
     ratio_max = float(ratio_max) if ratio_max is not None else None
     direction_mode = str(params.get("direction_mode", "opening_range"))
+    intraday_filter_mode = str(params.get("intraday_filter_mode", "none"))
+    max_vwap_distance_pct = params.get("max_vwap_distance_pct")
+    max_vwap_distance_pct = float(max_vwap_distance_pct) if max_vwap_distance_pct is not None else None
     for session, day in regular_frame.groupby("date", sort=True):
         day = day.set_index("datetime").between_time("09:30", "15:59").reset_index()
         if len(day) < opening_range_minutes + 5:
             continue
+        day = _add_intraday_anchors(day)
         first = day.iloc[:opening_range_minutes]
         or_high = float(first["high"].max())
         or_low = float(first["low"].min())
@@ -223,7 +231,7 @@ def run_intraday_orb(config_path: Path) -> Path:
                     entry_direction = 1
                 elif direction < 0 and price < or_low:
                     entry_direction = -1
-                if entry_direction:
+                if entry_direction and _intraday_filter_passes(entry_direction, bar, intraday_filter_mode, max_vwap_distance_pct):
                     risk_share = abs(price - or_mid)
                     if risk_share > 0:
                         equity = cash
@@ -265,6 +273,7 @@ def run_intraday_orb(config_path: Path) -> Path:
         "- This run uses the configured local one-minute bar file when `source_file` is present; otherwise it falls back to the limited yfinance intraday cache.",
         f"- Opening range uses the first {opening_range_minutes} regular-session minutes.",
         f"- Direction mode: {direction_mode}.",
+        f"- Intraday filter mode: {intraday_filter_mode}.",
         f"- Opening range / ATR20 filter: {ratio_min} < ratio <= {ratio_max}." if ratio_min is not None and ratio_max is not None else "- Opening range / ATR20 filter is disabled.",
         "- The local file covered the reported start/end dates in the metrics, which may be shorter than the source code's requested end date.",
         "- The backtest implements the pasted close-based stop/target checks.",
@@ -299,6 +308,7 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     opening_range_minutes = int(params.get("opening_range_minutes", 5))
     if len(day) < opening_range_minutes:
         raise RuntimeError(f"Need at least {opening_range_minutes} regular-session minute bars for {target_date.date()}; found {len(day)}")
+    day = _add_intraday_anchors(day.reset_index(drop=True))
 
     atr_lookback = int(params.get("atr_lookback", 20))
     entry_cutoff_time = str(params.get("entry_cutoff_time", "10:30"))
@@ -319,6 +329,13 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     direction_mode = str(params.get("direction_mode", "opening_range"))
     direction, direction_agreement_valid = _resolve_orb_direction(direction_mode, opening_range_direction, previous_close, or_close)
     previous_close_direction = _direction_from_previous_close(previous_close, or_close)
+    intraday_filter_mode = str(params.get("intraday_filter_mode", "none"))
+    max_vwap_distance_pct = params.get("max_vwap_distance_pct")
+    max_vwap_distance_pct = float(max_vwap_distance_pct) if max_vwap_distance_pct is not None else None
+    entry_bar = first.iloc[-1]
+    intraday_filter_valid = _intraday_filter_passes(direction, entry_bar, intraday_filter_mode, max_vwap_distance_pct)
+    entry_vwap = float(entry_bar.get("vwap", float("nan")))
+    entry_twap = float(entry_bar.get("twap", float("nan")))
     ratio = or_range / atr if atr and atr > 0 else float("nan")
     avg_opening_range = sum(previous_opening_ranges) / len(previous_opening_ranges) if previous_opening_ranges else float("nan")
     max_range_valid = True if not previous_opening_ranges else or_range <= 2.0 * avg_opening_range
@@ -355,6 +372,10 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
         opening_range_direction=opening_range_direction,
         direction_mode=direction_mode,
         direction_agreement_valid=direction_agreement_valid,
+        intraday_filter_mode=intraday_filter_mode,
+        intraday_filter_valid=intraday_filter_valid,
+        entry_vwap=entry_vwap,
+        entry_twap=entry_twap,
         atr20=atr,
         ratio=ratio,
         ratio_min=ratio_min,
@@ -387,6 +408,12 @@ def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
         prev_dir = "bullish" if recommendation.previous_close_direction > 0 else "bearish" if recommendation.previous_close_direction < 0 else "flat"
         print(f"Prior close direction: {prev_dir} ({recommendation.previous_close:.2f} -> {recommendation.or_close:.2f}); mode: {recommendation.direction_mode}")
     print(f"Selected trade direction: {recommendation.direction_name}")
+    if recommendation.intraday_filter_mode != "none":
+        print(
+            f"Intraday filter: {recommendation.intraday_filter_mode}; "
+            f"valid: {recommendation.intraday_filter_valid}; "
+            f"VWAP/TWAP: {recommendation.entry_vwap:.2f} / {recommendation.entry_twap:.2f}"
+        )
     print(f"Opening range high/low/mid: {recommendation.or_high:.2f} / {recommendation.or_low:.2f} / {recommendation.or_mid:.2f}")
     print(f"Opening range: {recommendation.or_range:.4f}")
     print(f"ATR{recommendation.atr_lookback} before session: {recommendation.atr20:.4f}")
@@ -403,6 +430,8 @@ def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
             print(f"- Opening range / ATR{recommendation.atr_lookback} is outside the tested {recommendation.ratio_min:.2f}-{recommendation.ratio_max:.2f} band.")
         if not recommendation.direction_agreement_valid:
             print("- Opening range direction does not agree with the prior-close direction filter.")
+        if not recommendation.intraday_filter_valid:
+            print(f"- Intraday filter `{recommendation.intraday_filter_mode}` did not confirm the trade direction.")
         if recommendation.shares <= 0:
             print("- Position size computed to zero shares.")
         return
@@ -464,6 +493,35 @@ def _resolve_orb_direction(direction_mode: str, opening_range_direction: int, pr
         agreement = previous_close_direction != 0 and previous_close_direction == opening_range_direction
         return opening_range_direction if agreement else 0, agreement
     raise ValueError(f"Unsupported ORB direction_mode: {direction_mode}")
+
+
+def _add_intraday_anchors(day: pd.DataFrame) -> pd.DataFrame:
+    day = day.copy()
+    typical = (day["high"].astype(float) + day["low"].astype(float) + day["close"].astype(float)) / 3.0
+    volume = day["volume"].astype(float).clip(lower=0.0)
+    cumulative_volume = volume.cumsum()
+    day["vwap"] = (typical * volume).cumsum() / cumulative_volume.replace(0.0, pd.NA)
+    day["vwap"] = day["vwap"].ffill().fillna(day["close"].astype(float).expanding().mean())
+    day["twap"] = day["close"].astype(float).expanding().mean()
+    return day
+
+
+def _intraday_filter_passes(direction: int, bar: pd.Series, filter_mode: str, max_vwap_distance_pct: float | None = None) -> bool:
+    if direction == 0 or filter_mode == "none":
+        return True
+    price = float(bar["close"])
+    vwap = float(bar.get("vwap", float("nan")))
+    twap = float(bar.get("twap", float("nan")))
+    if max_vwap_distance_pct is not None and pd.notna(vwap) and vwap > 0:
+        if abs(price - vwap) / vwap > max_vwap_distance_pct:
+            return False
+    if filter_mode == "entry_vwap":
+        return price > vwap if direction > 0 else price < vwap
+    if filter_mode == "entry_twap":
+        return price > twap if direction > 0 else price < twap
+    if filter_mode == "entry_vwap_and_twap":
+        return (price > vwap and price > twap) if direction > 0 else (price < vwap and price < twap)
+    raise ValueError(f"Unsupported intraday_filter_mode: {filter_mode}")
 
 
 def _atr20_before_session(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:

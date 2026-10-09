@@ -33,6 +33,7 @@ The live signal uses the selected full-history research variant:
 
 - Opening range: first 15 regular-session minutes, 09:30 through 09:44 ET.
 - Direction mode: `opening_range` by default. This keeps the original rule that the opening-range candle defines bullish or bearish bias. The tested alternatives are documented in [ORB Prior-Close Direction Test](ORB_PRIOR_CLOSE_DIRECTION_TEST.md).
+- Intraday filter mode: `none` by default. VWAP/TWAP side filters were mostly redundant in testing; the only useful variant was a VWAP overextension guard. See [ORB VWAP/TWAP Filter Test](ORB_VWAP_TWAP_FILTER_TEST.md).
 - Entry window: 09:45 through before 10:30 ET.
 - Trade only when `0.20 < opening_range / ATR20 <= 0.35`.
 - Keep the original 10R target.
