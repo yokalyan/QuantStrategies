@@ -12,6 +12,7 @@ strategy:
     breakeven_r: 6.0
     max_leverage: 4.0
     entry_buffer: 0.0
+    direction_mode: opening_range
 symbol: TQQQ
 start: '2021-01-01'
 end: '2026-06-01'

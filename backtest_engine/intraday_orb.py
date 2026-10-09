@@ -50,10 +50,15 @@ class OrbRecommendation:
     atr_lookback: int = 20
     entry_cutoff_time: str = "10:30"
     flatten_time: str = "15:30"
+    previous_close: float = float("nan")
+    previous_close_direction: int = 0
+    opening_range_direction: int = 0
+    direction_mode: str = "opening_range"
+    direction_agreement_valid: bool = True
 
     @property
     def can_trade(self) -> bool:
-        return bool(self.max_range_valid and self.ratio_valid and self.shares > 0)
+        return bool(self.direction != 0 and self.direction_agreement_valid and self.max_range_valid and self.ratio_valid and self.shares > 0)
 
     @property
     def order_side(self) -> str:
@@ -65,7 +70,11 @@ class OrbRecommendation:
 
     @property
     def direction_name(self) -> str:
-        return "bullish" if self.direction > 0 else "bearish"
+        if self.direction > 0:
+            return "bullish"
+        if self.direction < 0:
+            return "bearish"
+        return "neutral"
 
 
 def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -154,6 +163,7 @@ def run_intraday_orb(config_path: Path) -> Path:
     ratio_max = params.get("or_atr_max")
     ratio_min = float(ratio_min) if ratio_min is not None else None
     ratio_max = float(ratio_max) if ratio_max is not None else None
+    direction_mode = str(params.get("direction_mode", "opening_range"))
     for session, day in regular_frame.groupby("date", sort=True):
         day = day.set_index("datetime").between_time("09:30", "15:59").reset_index()
         if len(day) < opening_range_minutes + 5:
@@ -162,7 +172,11 @@ def run_intraday_orb(config_path: Path) -> Path:
         or_high = float(first["high"].max())
         or_low = float(first["low"].min())
         or_mid = (or_high + or_low) / 2.0
-        or_dir = 1 if float(first.iloc[-1]["close"]) >= float(first.iloc[0]["open"]) else -1
+        or_open = float(first.iloc[0]["open"])
+        or_close = float(first.iloc[-1]["close"])
+        opening_range_direction = 1 if or_close >= or_open else -1
+        previous_close = _previous_regular_close(daily, pd.Timestamp(session))
+        direction, direction_agreement_valid = _resolve_orb_direction(direction_mode, opening_range_direction, previous_close, or_close)
         current_range = or_high - or_low
         if len(opening_ranges) >= atr_lookback:
             avg_range = sum(opening_ranges[-atr_lookback:]) / min(atr_lookback, len(opening_ranges))
@@ -203,25 +217,25 @@ def run_intraday_orb(config_path: Path) -> Path:
                     be_triggered = False
                     continue
             earliest_entry_time = (pd.Timestamp("09:30") + pd.Timedelta(minutes=opening_range_minutes)).time()
-            if qty == 0 and (not traded_today) and range_valid and atr_range_valid and earliest_entry_time <= ts.time() < entry_cutoff_time:
-                direction = 0
-                if or_dir > 0 and price > or_high:
-                    direction = 1
-                elif or_dir < 0 and price < or_low:
-                    direction = -1
-                if direction:
+            if qty == 0 and (not traded_today) and direction_agreement_valid and range_valid and atr_range_valid and earliest_entry_time <= ts.time() < entry_cutoff_time:
+                entry_direction = 0
+                if direction > 0 and price > or_high:
+                    entry_direction = 1
+                elif direction < 0 and price < or_low:
+                    entry_direction = -1
+                if entry_direction:
                     risk_share = abs(price - or_mid)
                     if risk_share > 0:
                         equity = cash
                         size = int((equity * risk_per_trade) / risk_share)
                         size = min(size, int((equity * max_leverage) / price))
                         if size > 0:
-                            qty = direction * size
+                            qty = entry_direction * size
                             cash -= qty * price
                             entry_price = price
                             stop_price = or_mid
                             initial_risk = risk_share
-                            target_price = price + direction * profit_target_r * risk_share
+                            target_price = price + entry_direction * profit_target_r * risk_share
                             be_triggered = False
                             traded_today = True
                             fills.append(IntradayFill(ts, symbol, qty, price, "entry"))
@@ -250,6 +264,7 @@ def run_intraday_orb(config_path: Path) -> Path:
         "## Caveats",
         "- This run uses the configured local one-minute bar file when `source_file` is present; otherwise it falls back to the limited yfinance intraday cache.",
         f"- Opening range uses the first {opening_range_minutes} regular-session minutes.",
+        f"- Direction mode: {direction_mode}.",
         f"- Opening range / ATR20 filter: {ratio_min} < ratio <= {ratio_max}." if ratio_min is not None and ratio_max is not None else "- Opening range / ATR20 filter is disabled.",
         "- The local file covered the reported start/end dates in the metrics, which may be shorter than the source code's requested end date.",
         "- The backtest implements the pasted close-based stop/target checks.",
@@ -299,7 +314,11 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     or_open = float(first.iloc[0]["open"])
     or_close = float(first.iloc[-1]["close"])
     or_range = or_high - or_low
-    direction = 1 if or_close >= or_open else -1
+    opening_range_direction = 1 if or_close >= or_open else -1
+    previous_close = _previous_regular_close(daily, target_date)
+    direction_mode = str(params.get("direction_mode", "opening_range"))
+    direction, direction_agreement_valid = _resolve_orb_direction(direction_mode, opening_range_direction, previous_close, or_close)
+    previous_close_direction = _direction_from_previous_close(previous_close, or_close)
     ratio = or_range / atr if atr and atr > 0 else float("nan")
     avg_opening_range = sum(previous_opening_ranges) / len(previous_opening_ranges) if previous_opening_ranges else float("nan")
     max_range_valid = True if not previous_opening_ranges else or_range <= 2.0 * avg_opening_range
@@ -307,7 +326,7 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     ratio_max = float(params.get("or_atr_max", 0.25))
     ratio_valid = ratio_min < ratio <= ratio_max
     entry_buffer = float(params.get("entry_buffer", 0.0))
-    entry = or_high + entry_buffer if direction > 0 else or_low - entry_buffer
+    entry = or_high + entry_buffer if direction >= 0 else or_low - entry_buffer
     stop = or_mid
     risk_per_share = abs(entry - stop)
     risk_amount = capital * float(params.get("risk_per_trade", 0.006))
@@ -317,8 +336,8 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
     shares = max(0, min(shares_by_risk, shares_by_notional))
     profit_target_r = float(params.get("profit_target_r", 10.0))
     breakeven_r = float(params.get("breakeven_r", 6.0))
-    target = entry + direction * profit_target_r * risk_per_share
-    breakeven_trigger = entry + direction * breakeven_r * risk_per_share
+    target = entry + direction * profit_target_r * risk_per_share if direction != 0 else entry
+    breakeven_trigger = entry + direction * breakeven_r * risk_per_share if direction != 0 else entry
 
     return OrbRecommendation(
         symbol=symbol,
@@ -331,6 +350,11 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
         or_low=or_low,
         or_mid=or_mid,
         or_range=or_range,
+        previous_close=previous_close,
+        previous_close_direction=previous_close_direction,
+        opening_range_direction=opening_range_direction,
+        direction_mode=direction_mode,
+        direction_agreement_valid=direction_agreement_valid,
         atr20=atr,
         ratio=ratio,
         ratio_min=ratio_min,
@@ -357,7 +381,12 @@ def build_orb_recommendation(config: dict[str, Any], frame: pd.DataFrame, sessio
 
 def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
     print(f"ORB signal for {recommendation.symbol} on {recommendation.session_date.date()} ({recommendation.opening_range_minutes}-minute opening range)")
-    print(f"Opening candle: {recommendation.direction_name} ({recommendation.or_open:.2f} -> {recommendation.or_close:.2f})")
+    opening_direction = "bullish" if recommendation.opening_range_direction > 0 else "bearish" if recommendation.opening_range_direction < 0 else "neutral"
+    print(f"Opening candle: {opening_direction} ({recommendation.or_open:.2f} -> {recommendation.or_close:.2f})")
+    if pd.notna(recommendation.previous_close):
+        prev_dir = "bullish" if recommendation.previous_close_direction > 0 else "bearish" if recommendation.previous_close_direction < 0 else "flat"
+        print(f"Prior close direction: {prev_dir} ({recommendation.previous_close:.2f} -> {recommendation.or_close:.2f}); mode: {recommendation.direction_mode}")
+    print(f"Selected trade direction: {recommendation.direction_name}")
     print(f"Opening range high/low/mid: {recommendation.or_high:.2f} / {recommendation.or_low:.2f} / {recommendation.or_mid:.2f}")
     print(f"Opening range: {recommendation.or_range:.4f}")
     print(f"ATR{recommendation.atr_lookback} before session: {recommendation.atr20:.4f}")
@@ -372,6 +401,8 @@ def print_orb_recommendation(recommendation: OrbRecommendation) -> None:
             print(f"- Opening range failed the 2x historical {recommendation.atr_lookback}-session opening-range guardrail.")
         if not recommendation.ratio_valid:
             print(f"- Opening range / ATR{recommendation.atr_lookback} is outside the tested {recommendation.ratio_min:.2f}-{recommendation.ratio_max:.2f} band.")
+        if not recommendation.direction_agreement_valid:
+            print("- Opening range direction does not agree with the prior-close direction filter.")
         if recommendation.shares <= 0:
             print("- Position size computed to zero shares.")
         return
@@ -404,6 +435,35 @@ def _atr_before_session(daily: pd.DataFrame, session_date: pd.Timestamp, lookbac
     if len(previous) < lookback:
         return float("nan")
     return float(_true_range(previous).iloc[-lookback:].mean())
+
+
+def _previous_regular_close(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:
+    previous = daily[daily.index < session_date]
+    if previous.empty:
+        return float("nan")
+    return float(previous.iloc[-1]["close"])
+
+
+def _direction_from_previous_close(previous_close: float, or_close: float) -> int:
+    if pd.isna(previous_close):
+        return 0
+    if or_close > previous_close:
+        return 1
+    if or_close < previous_close:
+        return -1
+    return 0
+
+
+def _resolve_orb_direction(direction_mode: str, opening_range_direction: int, previous_close: float, or_close: float) -> tuple[int, bool]:
+    previous_close_direction = _direction_from_previous_close(previous_close, or_close)
+    if direction_mode == "opening_range":
+        return opening_range_direction, True
+    if direction_mode == "previous_close":
+        return previous_close_direction, previous_close_direction != 0
+    if direction_mode == "previous_close_agreement":
+        agreement = previous_close_direction != 0 and previous_close_direction == opening_range_direction
+        return opening_range_direction if agreement else 0, agreement
+    raise ValueError(f"Unsupported ORB direction_mode: {direction_mode}")
 
 
 def _atr20_before_session(daily: pd.DataFrame, session_date: pd.Timestamp) -> float:
